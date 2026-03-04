@@ -1,0 +1,107 @@
+---
+title: "gui.py — Finestra Principale"
+description: "PokerTHGui: orchestratore dell'interfaccia utente. GuiOutput: subscriber Observer che collega analisi e GUI."
+icon: "window-maximize"
+---
+
+## Responsabilità
+
+`app/gui.py` contiene la finestra principale dell'applicazione (`PokerTHGui`) e il subscriber Observer (`GuiOutput`) che riceve gli snapshot dall'engine e coordina DSS, logging e aggiornamenti GUI.
+
+**Livello**: Presentazione  
+**Dipendenze**: `customtkinter`, `engine/session.py`, `engine/hand_history.py`, `engine/decision_engine.py`, `engine/file_logger.py`
+
+---
+
+## `GuiOutput` — Observer Subscriber
+
+Implementa l'interfaccia listener richiesta da `StateTracker`.
+
+### Stato Interno
+
+| Attributo | Descrizione |
+|---|---|
+| `_trackers` | `dict[str, HandHistoryTracker]` — uno per tavolo |
+| `_engines` | `dict[str, PreflopDecisionEngine]` — uno per tavolo |
+| `_logger` | `FileLogger` condiviso |
+| `_gui` | Riferimento a `PokerTHGui` per `after(0, ...)` |
+
+### `on_state_changed(snapshot)`
+
+```python
+# Lazy init per nuovo tavolo
+tracker = self._engine_for(snapshot["table_name"])
+engine  = self._engine_for(snapshot["table_name"])
+
+tracker.update(snapshot)
+
+# Priorità: fold sovrascrive il risultato dell'engine
+if is_hero_folded(snapshot):
+    decision = Decision.FOLDED
+else:
+    decision = engine.evaluate(snapshot)
+
+our_turn = is_hero_turn(snapshot)
+ts = datetime.now().strftime("%H:%M:%S")
+
+self._logger.log({**snapshot, "decision": decision.value, "ts": ts})
+
+# Thread-safe update alla GUI
+self._gui.after(0, lambda s=snapshot, d=decision, t=ts:
+    self._gui._on_snapshot(s, d, our_turn, t)
+)
+```
+
+### `on_table_closed(table_name)`
+
+Rimuove tracker ed engine per il tavolo chiuso. Notifica `dashboard.remove_table(table_name)`.
+
+---
+
+## `PokerTHGui` — Finestra Principale
+
+`ctk.CTk` in dark mode, dimensioni 1100×680. Usa `customtkinter` con tema blu.
+
+### Layout
+
+```
+┌─────────────────────────────────────────────────────┐
+│  SIDEBAR (250px fissi)    │  MAIN AREA (espandibile) │
+│  ┌─────────────────────┐  │                          │
+│  │  Avvia Analisi      │  │  MultiTableView (Vista A)│
+│  │  Ferma Analisi      │  │  oppure                  │
+│  │  Calibrazione       │  │  DetailView (Vista B)    │
+│  │  ─────────────────  │  │                          │
+│  │  Log testbox        │  │                          │
+│  └─────────────────────┘  │                          │
+└─────────────────────────────────────────────────────┘
+```
+
+### Azioni Principali
+
+**`start_analysis()`**:
+1. Crea `GuiOutput` + `FileLogger`
+2. Crea `AnalysisEngine(listener=GuiOutput)`
+3. Avvia `engine.start()` in un thread daemon
+4. Aggiorna UI (disabilita Start, abilita Stop)
+
+**`stop_analysis()`**:
+1. `engine.stop()` → setta `_running = False`
+2. Pulisce `_sessions`, `_trackers`, `GuiOutput`
+3. Reimposta UI
+
+**`open_calibration()`**:
+1. Tenta di catturare un frame live da PokerTH
+2. Apre `CalibrationWindow(cv_image)` (o `CalibrationWindow(None)` se nessuna finestra trovata)
+
+### `_on_snapshot(snapshot, decision, our_turn, ts)`
+
+Chiamato dal mainloop tkinter (via `after(0, ...)`). Aggiorna:
+- `MultiTableView.update_table(...)` — badge decisione + banner turno
+- `DetailView.update(...)` — se il tavolo è quello focalizzato
+- Buffer log interno (max 300 entry, deduplicato per `_last_snap_key`)
+- Log textbox sidebar
+
+### Buffer Log
+
+Il buffer mantiene le ultime 300 entry come tuple `(table_name, snapshot_dict, decision, ts)`. Ogni entry viene resa tramite `_render_log_entry()` che formatta in testo leggibile: timestamp, tavolo, stato, carte, posizione, decisione.

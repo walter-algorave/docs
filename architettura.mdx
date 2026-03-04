@@ -1,0 +1,140 @@
+---
+title: "Architettura del Sistema"
+description: "Struttura a 4 livelli SOLID, data flow del ciclo a 1 Hz e design pattern del progetto."
+icon: "sitemap"
+---
+
+## Architettura a Livelli
+
+Il sistema è organizzato in **4 livelli SOLID** con dipendenze unidirezionali (ogni livello conosce solo quello sotto di sé):
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  LIVELLO PRESENTAZIONE                                       │
+│  gui.py          → PokerTHGui, GuiOutput (Observer)         │
+│  gui_views.py    → MultiTableView, DetailView, TableCard    │
+│  calibration.py  → CalibrationWindow                        │
+└─────────────────────────┬───────────────────────────────────┘
+                          │  Observer: on_state_changed(snapshot)
+┌─────────────────────────▼───────────────────────────────────┐
+│  LIVELLO APPLICAZIONE                                        │
+│  engine/session.py         → AnalysisEngine, GameSession,   │
+│                              StateTracker                    │
+│  engine/hand_history.py    → HandHistoryTracker             │
+│  engine/decision_engine.py → PreflopDecisionEngine          │
+│  engine/file_logger.py     → FileLogger                     │
+└─────────────────────────┬───────────────────────────────────┘
+                          │  chiamate di dominio
+┌─────────────────────────▼───────────────────────────────────┐
+│  LIVELLO DOMINIO                                             │
+│  vision/card_reader.py  → CardReader (template + HSV)       │
+│  vision/table_reader.py → TableReader (dealer, bet, pot)    │
+│  vision/image_utils.py  → funzioni CV pure (stateless)      │
+└─────────────────────────┬───────────────────────────────────┘
+                          │  chiamate infrastrutturali
+┌─────────────────────────▼───────────────────────────────────┐
+│  LIVELLO INFRASTRUTTURA                                      │
+│  capture/screen_capture.py → ScreenCapture (Win32)          │
+│  app/settings.py           → configurazione globale         │
+│  templates/cards/          → template PNG dei ranghi        │
+└─────────────────────────────────────────────────────────────┘
+```
+
+<Note>
+`settings.py` è l'unico concern trasversale: viene letto da tutti i livelli ma scritto solo dal sistema di calibrazione.
+</Note>
+
+## Data Flow — Ciclo da 1 Hz
+
+Questo è il flusso completo di un singolo ciclo di analisi, dalla cattura schermo alla notifica GUI:
+
+```
+AnalysisEngine._loop()  [thread daemon, 1 Hz]
+  │
+  ├─ ScreenCapture.find_windows()
+  │    └─ Win32 EnumWindows → filtra per titolo "PokerTH"
+  │    └─ MoveWindow → ridimensiona a 1280×720 (una sola volta per hwnd)
+  │
+  ├─ ScreenCapture.grab([hwnd, ...])
+  │    └─ GetWindowDC → CreateCompatibleDC → PrintWindow
+  │    └─ PIL Image.frombuffer('RGB', 'BGRX') → temp PNG
+  │    └─ restituisce [Screenshot(table_name, filename), ...]
+  │
+  └─ Per ogni Screenshot:
+       │
+       GameSession.update(screenshot)
+         ├─ cv2.imread(filename)  [legge il PNG temporaneo]
+         ├─ TableReader.get_active_players(img)
+         │    └─ seat 0 (Hero): pixel bianchi nelle carte = attivo
+         │    └─ seat 1–5: colore card-back HSV = attivo
+         ├─ CardReader.read_table_cards(img)
+         │    └─ hash MD5 → skip se invariata
+         │    └─ 5 ROI: is_card_empty? → template match + HSV suit
+         │    └─ filtro plausibilità: solo 0/3/4/5 carte valide
+         ├─ GameSession.check_game_state()
+         │    └─ len(table_cards) → Preflop/Flop/Turn/River/"Unknown"
+         ├─ TableReader.get_pot(img)
+         │    └─ hash MD5 → Tesseract --psm 7 whitelist numerica
+         ├─ [new-hand reset logic]
+         │    └─ Preflop + pot < 5.0 + _max_pot_seen ≥ 5.0 → hand_id++
+         ├─ CardReader.read_player_cards(img)
+         │    └─ hash MD5 → _is_player_cards_hidden? → debounce
+         │    └─ se face-up: template match + HSV suit
+         ├─ TableReader.find_dealer(img)
+         │    └─ 6 ROI: bianco% > 50% → indice dealer
+         └─ TableReader.get_relative_position()
+              └─ seat_to_position(dealer, hero=0, active_players)
+
+       StateTracker.check(session)
+         ├─ confronta TUTTI i campi vs snapshot precedente
+         └─ se cambiato → _snapshot() → notifica tutti i listener
+              └─ GuiOutput.on_state_changed(snapshot)
+
+GuiOutput.on_state_changed(snapshot)
+  ├─ HandHistoryTracker.update(snapshot)
+  │    └─ hand_id cambiato → reset; inferisce BB; rileva raise
+  ├─ is_hero_folded() → bool
+  ├─ PreflopDecisionEngine.evaluate(snapshot) → Decision
+  ├─ FileLogger.log(enriched_snapshot)
+  └─ gui.after(0, lambda: _on_snapshot(...))  [thread-safe]
+```
+
+## Design Pattern Utilizzati
+
+| Pattern | Dove | Scopo |
+|---|---|---|
+| **Observer** | `StateTracker` → `GuiOutput`, `FileLogger` | Disaccoppia il rilevatore stato dagli output; aggiungere un listener = zero modifiche al core |
+| **Dependency Injection** | `GameSession(card_reader, table_reader)`, `AnalysisEngine(listener)` | Testabilità senza finestre reali |
+| **Hash-caching** | `CardReader`, `TableReader` | Salta OCR/template matching quando i pixel ROI non cambiano (MD5 per ROI) |
+| **Per-instance cache** | `CardReader` instanziato per ogni `GameSession` | Cache indipendenti per multi-tavolo |
+| **Stateless predicates** | `is_hero_turn()`, `is_hero_folded()` | Funzioni pure sullo snapshot dict — nessuna storia necessaria |
+| **Regex-patch settings** | `calibration_params._patch()` | Persiste la calibrazione modificando `settings.py` live via regex |
+| **Monotonic hand_id** | `GameSession` → `HandHistoryTracker` | Rileva transizioni Preflop→Preflop che il diff di `game_state` non vede |
+| **Double-checked locking** | `CardReader._templates_lock` | Thread-safe lazy loading dei template PNG in scenari multi-tavolo |
+
+## Gestione Multi-Tavolo
+
+`AnalysisEngine` gestisce N istanze di PokerTH in parallelo. Ogni tavolo ha:
+
+- Il proprio `GameSession` (stato CV + hash cache indipendenti)
+- Il proprio `StateTracker` (snapshot precedente indipendente)
+- Il proprio `HandHistoryTracker` + `PreflopDecisionEngine` (in `GuiOutput`)
+
+I template PNG dei ranghi sono condivisi a livello di classe (`CardReader._templates`) per efficienza: vengono caricati una volta sola con double-checked locking, indipendentemente da quanti tavoli siano aperti.
+
+## Thread Safety
+
+```
+Thread daemon (AnalysisEngine._loop)
+  └─ scrive GameSession → StateTracker → chiama GuiOutput.on_state_changed
+
+Thread GUI (tkinter mainloop)
+  └─ legge solo da snapshot immutabili (dict)
+  └─ tutte le scritture alla GUI passano per after(0, lambda:...)
+
+Thread di calibrazione (CalibrationWindow._read_thread)
+  └─ legge immagine ROI → scrive solo al widget feedback via after(0, lambda:...)
+
+FileLogger
+  └─ threading.Lock interno per ogni write su disco
+```

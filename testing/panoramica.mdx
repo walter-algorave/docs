@@ -1,0 +1,106 @@
+---
+title: "Suite di Test"
+description: "Panoramica dei 5 file di test, copertura per livello architetturale e statistiche."
+icon: "flask"
+---
+
+## Statistiche Generali
+
+| File | Classi di Test | Test Totali | Livello |
+|---|---|---|---|
+| `test_models.py` | 3 | 15 | Trasversale |
+| `test_settings.py` | 1 | 22 | Infrastruttura |
+| `test_engine.py` | ~4 | 26 | Applicazione |
+| `test_decision_engine.py` | ~5 | 22 | Applicazione (DSS) |
+| `test_tools_image.py` | ~3 | 20 | Dominio (Vision) |
+| **Totale** | | **~105** | |
+
+---
+
+## Copertura per Modulo
+
+### `test_models.py` — 15 test
+
+Verifica le strutture dati fondamentali:
+
+- **`TestColors`** (5 test): valori enum (`"H"`, `"D"`, `"C"`, `"S"`, `"X"`), unicità valori, membership
+- **`TestCard`** (9 test): formato `__str__` (`"HA"`, `"DK"`), `__repr__`, uguaglianza (`__eq__`), disuguaglianza, `Colors.Error` come sentinel, coppie di carte
+- **`TestScreenshot`** (2 test): inizializzazione attributi, `__str__`
+
+---
+
+### `test_settings.py` — 22 test
+
+Verifica che tutti i parametri in `settings.py` esistano e abbiano la struttura corretta:
+
+- `WINDOW_NAME` è stringa non vuota
+- `WINDOW_SIZE` è lista di 4 interi
+- `TESSERACT_PATH` è stringa
+- `TEMPLATE_MATCH_THRESHOLD` è float in `[0.0, 1.0]`
+- `CARD_W`, `CARD_H` sono interi positivi
+- `HERO_CARD_POSITIONS`: lista di 2 elementi `[x, y]`
+- `BOARD_CARD_POSITIONS`: lista di 5 elementi `[x, y]`; verifica che le x siano in ordine crescente (sinistra → destra)
+- `BUTTON_POSITIONS`, `BET_POSITIONS`, `PLAYER_POSITIONS`: lista di 6 elementi `[x, y, w, h]` con w/h positivi
+- `POT_AREA`: lista di 4 interi con w/h positivi
+- `MAX_INVALID_READS`: intero positivo
+- Assenza di variabili deprecate o rinominate
+
+---
+
+### `test_engine.py` — 26 test
+
+Testa `GameSession`, `StateTracker` e le funzioni predicato:
+
+- **`GameSession.check_game_state()`**: 0/3/4/5 carte → stati corretti; altri numeri → `"Unknown"`
+- **`StateTracker.check()`**: nessuna notifica se stato invariato; notifica se cambia almeno un campo; correttezza snapshot dict
+- **`is_hero_turn()`**: True solo se hero ha 2 carte e bet < max; False se folded; False se non preflop
+- **`is_hero_folded()`**: comportamento Preflop vs Flop/Turn/River
+- **Integrazione**: `hand_id` incrementa correttamente con la new-hand logic
+
+---
+
+### `test_decision_engine.py` — 22 test
+
+Testa il DSS in isolamento completo:
+
+- **`TestHandKey`** (6): pairs, suited, offsuit, ordine rango, Ten (`"T"`), rango invalido → `""`
+- **`TestLookup`** (3): key in raise list, key in call list, key non presente → `"fold"`
+- **`TestSeatToPosition`** (4): tavolo pieno 6 giocatori, seat sparsi, heads-up, seat inattivo → `"Unknown"`
+- **`TestNormalizePosition`** (6): 6-max invariato; 5/4-player EP/MP collassa; n_active=0 guard
+- **Integrazione engine** (~9): RFI scenario → RAISE/CALL/FOLD; VS_RAISE scenario; guardia WAIT (non calibrato, non preflop, 0 carte); guardia COMPROMISED
+
+---
+
+### `test_tools_image.py` — 20 test
+
+Testa le funzioni CV pure di `image_utils.py`:
+
+- **`TestPreprocessNumberRoi`**: output corretto (3× upscale + binarizzato)
+- **`TestHexToHsvRange`**: conversione HEX → range HSV valido; flag `is_black`
+- **`TestMatchCardTemplate`**: template match su immagini test sintetiche; ritorna `"X"` sotto threshold
+- **`TestIsCardEmpty`**: distingue carta piena da ROI verde (sfondo)
+
+---
+
+## Architettura dei Test
+
+I test seguono il principio di **dependency injection** già integrato nell'architettura:
+
+```python
+# test_decision_engine.py — esempio pattern
+def make_snapshot(**overrides):
+    base = {
+        "game_state":        "Preflop",
+        "player_cards":      [Card("A", Hearts), Card("K", Diamonds)],
+        "table_cards":       [],
+        "relative_position": "CO",
+        "hand_id":           1,
+        "player_bets":       {0: 0, 1: 0.5, 2: 1.0},
+        "pot_amount":        1.5,
+        ...
+    }
+    base.update(overrides)
+    return base
+```
+
+I test non richiedono finestre reali, screenshot o template PNG — operano su dati sintetici.

@@ -1,0 +1,117 @@
+---
+title: "Posizioni al Tavolo"
+description: "Come vengono calcolate le posizioni EP/MP/CO/BU/SB/BB, seat_to_position e normalize_position per tavoli short-handed."
+icon: "users"
+---
+
+## Posizioni nel Texas Hold'em 6-Max
+
+In un tavolo 6-max, le posizioni sono assegnate **in senso orario** a partire dal dealer:
+
+```
+       Dealer (BU)
+      ╱           ╲
+   CO               SB
+   │                 │
+   MP               BB
+      ╲           ╱
+          EP
+```
+
+| Posizione | Sigla | Distanza dal dealer (oraria) |
+|---|---|---|
+| Button | BU | 0 passi (il dealer stesso) |
+| Small Blind | SB | 1 posto dopo dealer |
+| Big Blind | BB | 2 posti dopo dealer |
+| Early Position | EP | 3 posti dopo dealer |
+| Middle Position | MP | 4 posti dopo dealer |
+| Cutoff | CO | 5 posti dopo dealer |
+
+---
+
+## `seat_to_position(seat, dealer, active_players) → str`
+
+Implementata in `preflop_tables.py`. Calcola la posizione relativa di un seat dato il dealer e i giocatori attivi.
+
+### Algoritmo
+
+```python
+# 1. Lista dei seat in ordine orario partendo dal dealer
+ordered = [(dealer + i) % 6 for i in range(6)]
+
+# 2. Filtra solo i seat attivi
+ordered = [s for s in ordered if s in active_players]
+
+# 3. Mappa posizione in base alla distanza dal dealer
+_POS_MAP = {0: "BU", 1: "SB", 2: "BB", 3: "EP", 4: "MP", 5: "CO"}
+pos_index = ordered.index(seat)
+return _POS_MAP[pos_index]
+```
+
+Il seat del dealer è sempre a indice 0 → `"BU"`. "Unknown" viene restituito se il seat non è nella lista attivi o se `dealer == -1`.
+
+### Esempi con 6 Giocatori
+
+| Dealer | Seat 0 | Posizione Hero (Seat 0) |
+|---|---|---|
+| Seat 0 | BU | BU |
+| Seat 1 | CO | CO |
+| Seat 2 | MP | MP |
+| Seat 3 | EP | EP |
+| Seat 4 | BB | BB |
+| Seat 5 | SB | SB |
+
+---
+
+## Tutti i Seat Attivi — Esempio Completo
+
+Con Dealer = Seat 3, tutti i 6 giocatori attivi:
+
+```
+ordered = [3, 4, 5, 0, 1, 2]
+         BU  SB  BB  EP  MP  CO
+```
+
+| Seat | Posizione |
+|---|---|
+| 3 | BU |
+| 4 | SB |
+| 5 | BB |
+| 0 | EP |
+| 1 | MP |
+| 2 | CO |
+
+---
+
+## `normalize_position(position, n_active) → str`
+
+Per tavoli short-handed, le posizioni "early" collassano: con meno giocatori, non esistono EP o MP.
+
+### Regola
+
+Con N giocatori attivi, esistono solo le ultime N posizioni nella sequenza:
+
+```python
+_POSITIONS = ["EP", "MP", "CO", "BU", "SB", "BB"]
+# Con n_active = N, le ultime N sono valide
+# Le prime (6 - N) collassano alla prima valida
+```
+
+### Tabella di Normalizzazione
+
+| Posizione raw | 6 attivi | 5 attivi | 4 attivi | 3 attivi | 2 attivi |
+|---|---|---|---|---|---|
+| EP | EP | MP | CO | BU | SB |
+| MP | MP | MP | CO | BU | SB |
+| CO | CO | CO | CO | BU | SB |
+| BU | BU | BU | BU | BU | SB |
+| SB | SB | SB | SB | SB | SB |
+| BB | BB | BB | BB | BB | BB |
+
+### Esempio
+
+Con 4 giocatori, EP e MP non esistono come posizioni reali. Una mano `EP` normalizzata a 4 attivi diventa `CO` — la prima posizione che apre in un tavolo a 4.
+
+<Note>
+`n_active ≤ 0` è gestito come caso special: viene trattato come 2 giocatori per evitare divisioni per zero o indici fuori range.
+</Note>

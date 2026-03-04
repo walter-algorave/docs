@@ -1,0 +1,115 @@
+---
+title: "calibration_params.py — Parametri di Calibrazione"
+description: "_Ref, build_params, patch helpers: la fondazione del sistema di calibrazione che riscrive settings.py live."
+icon: "sliders"
+---
+
+## Responsabilità
+
+`app/calibration_params.py` definisce le **strutture dati e funzioni** che il sistema di calibrazione usa per gestire i 27 parametri calibrabili, modificare `settings.py` in tempo reale e mantenere baseline/valori correnti.
+
+**Livello**: Presentazione (supporto a `CalibrationWindow`)
+
+---
+
+## `_Ref` — Contenitore Valore Mutabile
+
+```python
+class _Ref:
+    def __init__(self, value):
+        self.value   = value    # valore corrente (aggiornato dalla calibrazione)
+        self._origin = value    # baseline (valore alla creazione della sessione)
+
+    def restore(self):
+        self.value = self._origin    # ripristina alla baseline
+
+    def reset(self, new_value):
+        self.value   = new_value     # aggiorna sia corrente che baseline
+        self._origin = new_value     # (dopo un salvataggio)
+```
+
+---
+
+## Patch Helpers
+
+Questi helper modificano `settings.py` **in-place** tramite regex, permettendo alla calibrazione di persistere senza riavvio.
+
+### `_patch(var, val)`
+
+Sostituisce `VAR = <old_value>` con `VAR = repr(val)`.
+
+```python
+# Prima: CARD_W = 21
+# Dopo:  CARD_W = 23
+_patch("CARD_W", 23)
+```
+
+Usa `re.subn` con flag `MULTILINE` — sostituisce solo la prima occorrenza della variabile a inizio riga.
+
+### `_patch_list_item(var, idx, val)`
+
+Sostituisce l'elemento all'indice `idx` in una lista multi-riga di `settings.py`.
+
+```python
+# Prima: HERO_CARD_POSITIONS = [[100, 200], [130, 200]]
+# Dopo:  HERO_CARD_POSITIONS = [[105, 198], [130, 200]]
+_patch_list_item("HERO_CARD_POSITIONS", 0, [105, 198])
+```
+
+Algoritmo: trova la dichiarazione della variabile, conta le righe fino all'elemento idx (tracciando le parentesi quadre), sostituisce solo quella riga.
+
+### `_rewrite(pattern, repl)`
+
+Core interno: legge `settings.py`, applica `re.subn(pattern, repl, content, flags=MULTILINE)`, scrive il file modificato.
+
+---
+
+## `_load_settings_values() → dict`
+
+Legge i valori attuali da `settings` e li restituisce come dict piatto con chiavi nominative:
+
+```python
+{
+    "POT_AREA":     [457, 365, 105, 20],
+    "HERO_CARD_0":  [x, y],
+    "HERO_CARD_1":  [x, y],
+    "BOARD_CARD_0": [x, y],
+    ...
+    "BUTTON_0":     [x, y, w, h],
+    "BUTTON_1":     [x, y, w, h],
+    ...
+    "BET_0":        [x, y, w, h],
+    ...
+    "PLAYER_0":     [x, y, w, h],
+    ...
+}
+```
+
+Totale: 1 (POT) + 2 (HERO) + 5 (BOARD) + 6 (BUTTON) + 6 (BET) + 6 (PLAYER) = **26 parametri** distinti (27 entry nel dropdown contado con POT_AREA).
+
+---
+
+## `build_refs() → dict[str, _Ref]`
+
+Chiama `_load_settings_values()` e costruisce un `_Ref` per ogni parametro. Il risultato è il dizionario `refs` passato a `build_params()`.
+
+---
+
+## `build_params(refs) → list[dict]`
+
+Costruisce la lista completa dei **27 parametri** usati dal dropdown di `CalibrationWindow`. Ogni parametro è un dict con:
+
+| Chiave | Tipo | Descrizione |
+|---|---|---|
+| `"label"` | `str` | Nome visualizzato nel dropdown |
+| `"category"` | `str` | `"card"` / `"button"` / `"bet"` / `"player"` / `"pot"` |
+| `"get_rect"` | `() → list` | Restituisce la ROI corrente |
+| `"set_rect"` | `(rect) → None` | Aggiorna il `_Ref` locale |
+| `"read_fn"` | `(img) → str` | Legge la ROI e restituisce feedback testo |
+| `"save_fn"` | `() → None` | Scrive su `settings.py` via regex |
+| `"restore_fn"` | `() → None` | Ripristina il valore baseline |
+| `"extra_rects"` | `() → list[list]` | ROI degli altri parametri della stessa categoria |
+
+### Factory `_make_xywh_param`
+
+Genera automaticamente i parametri per `[x, y, w, h]` (button, bet, player) con get/set/save/restore/extra_rects pre-cablati, riducendo il boilerplate da 6×3 = 18 definizioni identiche a 3 chiamate alla factory.

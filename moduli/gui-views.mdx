@@ -1,0 +1,116 @@
+---
+title: "gui_views.py — Componenti Vista"
+description: "MultiTableView, DetailView e TableCard: i componenti UI per visualizzare lo stato dei tavoli."
+icon: "layout"
+---
+
+## Responsabilità
+
+`app/gui_views.py` contiene i **componenti UI riutilizzabili** per la visualizzazione dello stato. Separati da `gui.py` per rispettare il principio di responsabilità singola.
+
+**Livello**: Presentazione
+
+---
+
+## `TableCard` — Card Singolo Tavolo
+
+`ctk.CTkFrame`, dimensioni **210×185 px**, cliccabile.
+
+### Contenuto
+
+- Nome tavolo
+- **Badge decisione** — sfondo colorato da `BADGE_COLORS[Decision]`
+- Fase di gioco (Preflop / Flop / Turn / River)
+- Conteggio giocatori attivi
+
+### Banner Turno
+
+Quando `our_turn=True`:
+- **Bordo oro** intorno al frame
+- Banner `"🎯 IL TUO TURNO"` in evidenza
+
+### `update_snapshot(snapshot, decision, our_turn)`
+
+Aggiorna tutti i label e lo stile del bordo in un singolo call thread-safe (chiamato via `after(0, ...)` dal mainloop).
+
+---
+
+## `MultiTableView` — Vista Multi-Tavolo (Vista A)
+
+`ctk.CTkFrame` che mostra una **griglia orizzontale** di `TableCard`.
+
+### Gestione Tavoli
+
+```python
+_cards: dict[str, TableCard]   # nome_tavolo → widget
+
+def add_table(name: str)       # crea e mostra nuovo TableCard
+def remove_table(name: str)    # rimuove widget e distrugge TableCard
+def update_table(name, snapshot, decision, our_turn)  # aggiorna badge
+```
+
+Quando non ci sono tavoli attivi, mostra un label placeholder "Nessun tavolo attivo".
+
+### Navigazione a DetailView
+
+Ogni `TableCard` è configurato con un `command` che chiama `gui._switch_to_detail(table_name)` al click, passando alla Vista B.
+
+---
+
+## `DetailView` — Vista Dettaglio (Vista B)
+
+`ctk.CTkFrame` per un singolo tavolo con tutte le informazioni disponibili.
+
+### Layout
+
+```
+[← Torna] Nome Tavolo
+
+Carte Hero:  [♥A] [♦K]
+Board:       [♣Q] [♦J] [♥T] [ ] [ ]
+
+Fase: Preflop  |  Posizione: CO  |  Pot: 12.50
+
+Giocatori attivi: 0, 1, 3, 4
+
+Seat 0 (Hero):   0.00
+Seat 1:          2.00
+Seat 2:          —
+...
+
+[ RAISE ]   ← badge decisione
+```
+
+### Visualizzazione Carte (4 Colori)
+
+Le carte usano i simboli Unicode e 4 colori, coerenti con il mazzo 4 colori di PokerTH:
+
+| Seme | Simbolo | Colore |
+|---|---|---|
+| Hearts | ♥ | Rosso `#FF4444` |
+| Diamonds | ♦ | Blu `#4444FF` |
+| Clubs | ♣ | Verde `#44AA44` |
+| Spades | ♠ | Bianco `#FFFFFF` |
+
+Carte non ancora giocate (5ª carta river non ancora uscita) vengono mostrate come `[ ]`.
+
+### `update(snapshot, decision, our_turn)`
+
+Aggiorna tutti i componenti della vista in un singolo call.
+
+---
+
+## `BADGE_COLORS` — Palette Decisioni
+
+```python
+BADGE_COLORS = {
+    Decision.RAISE:       ("#16A34A", "#FFFFFF"),  # verde
+    Decision.CALL:        ("#2563EB", "#FFFFFF"),  # blu
+    Decision.FOLD_CHECK:  ("#6B7280", "#FFFFFF"),  # grigio
+    Decision.FOLDED:      ("#374151", "#9CA3AF"),  # scuro opaco
+    Decision.WAIT:        ("#1F2937", "#6B7280"),  # scuro neutro
+    Decision.COMPROMISED: ("#B91C1C", "#FFFFFF"),  # rosso errore
+    Decision.UNKNOWN:     ("#1F2937", "#4B5563"),  # scuro neutro
+}
+# Tupla: (background_hex, foreground_hex)
+```

@@ -1,0 +1,120 @@
+---
+title: "Hand History Tracker"
+description: "Come HandHistoryTracker rileva le nuove mani, inferisce il BB e identifica il primo raiser."
+icon: "timeline"
+---
+
+## Ruolo nel DSS
+
+`HandHistoryTracker` è la **memoria contestuale** del DSS. `PreflopDecisionEngine` è stateless — tutta l'informazione necessaria per scegliere la tabella (scenario RFI o VS_RAISE, posizione raiser, numero giocatori) viene fornita dal tracker.
+
+---
+
+## Rilevamento Nuova Mano
+
+Il tracker monitora il campo `hand_id` dello snapshot. `hand_id` è un contatore monotono in `GameSession` che si incrementa quando il pot crolla dopo essere salito (fine mano → inizio nuova).
+
+```python
+if snapshot["hand_id"] != self._last_hand_id:
+    # Reset completo stato per-mano
+    self._raiser_seat     = None
+    self._raiser_pos      = None
+    self._raised_amount   = None
+    self._bb_amount       = None
+    self._posted_blinds   = False
+    self._hand_compromised = False
+    self._n_players_start = len(snapshot["active_players"])
+    self._last_hand_id    = snapshot["hand_id"]
+```
+
+Tutte le informazioni della mano precedente vengono azzerate.
+
+---
+
+## Primo Snapshot: Calibrazione
+
+Al **primo snapshot Preflop pulito** (0 carte board, `game_state == "Preflop"`), il tracker si segna come calibrato:
+
+```python
+if not self._calibrated and game_state == "Preflop" and len(table_cards) == 0:
+    self._calibrated = True
+```
+
+Prima di questo momento, `is_calibrated()` restituisce `False` e il DSS risponde `Decision.WAIT`.
+
+---
+
+## Inferenza Big Blind (Fase 1)
+
+Il BB è necessario per rilevare i raise. L'importo del BB non è visibile direttamente — va dedotto dalle scommesse dei blinds.
+
+### Algoritmo
+
+```python
+# Precondizioni: almeno 2 bet visibili, blinds non ancora rilevati
+bets_sorted = sorted(current_bets.values())
+if len(bets_sorted) >= 2:
+    sb_candidate = bets_sorted[0]
+    bb_candidate = bets_sorted[1]
+    ratio = sb_candidate / bb_candidate
+    
+    if 0.40 <= ratio <= 0.65:   # SB/BB atteso = 0.50
+        self._bb_amount    = bb_candidate
+        self._posted_blinds = True
+```
+
+La finestra 0.40–0.65 tolera:
+- Variazioni OCR (es. 0.99 invece di 1.00)
+- Strutture di blinds non-standard (es. SB = 0.45 × BB)
+
+Se il rapporto è fuori range (es. c'è già un raise), l'inferenza viene saltata per questa mano.
+
+---
+
+## Rilevamento Raiser (Fase 2)
+
+Dopo l'inferenza del BB, il tracker cerca il **primo giocatore che ha scommesso più del BB** e che ha aumentato la sua bet rispetto al frame precedente.
+
+```python
+# Precondizioni: BB noto, raiser non ancora trovato
+for seat, current_amount in snapshot["player_bets"].items():
+    prev_amount = self._prev_bets.get(seat, 0.0)
+    
+    if current_amount > self._bb_amount and current_amount > prev_amount:
+        # Questo seat ha appena alzato oltre il BB
+        self._raiser_seat   = seat
+        self._raiser_pos    = get_raiser_position(snapshot, seat)
+        self._raised_amount = current_amount
+        break   # solo il primo raiser
+```
+
+<Note>
+Viene tracciato solo il **primo raise**. Scenari di 3-bet, 4-bet o re-raise non sono gestiti — il tracker si ferma al primo raiser identificato.
+</Note>
+
+---
+
+## Stato Compromesso
+
+Se `game_state == "Unknown"` viene ricevuto, la mano è considerata compromessa:
+
+```python
+if snapshot["game_state"] == "Unknown":
+    self._hand_compromised = True
+    if self._error_callback:
+        self._error_callback("Lettura anomala rilevata")
+```
+
+Il DSS risponde con `Decision.COMPROMISED` per tutta la durata della mano, anche se le letture tornatrono normali.
+
+---
+
+## Interfaccia Query
+
+| Metodo | Ritorna | Usato da |
+|---|---|---|
+| `is_rfi()` | `_raiser_seat is None` | `evaluate()` — sceglie RFI vs VS_RAISE |
+| `raiser_position()` | `_raiser_pos` (str o None) | `evaluate()` — costruisce chiave `VS_<pos>` |
+| `is_calibrated()` | `_calibrated` (bool) | `evaluate()` — guardia iniziale |
+| `n_players_at_start()` | `_n_players_start` (int) | `normalize_position()` — adatta a short-handed |
+| `is_hand_compromised()` | `_hand_compromised` (bool) | `evaluate()` — guardia COMPROMISED |

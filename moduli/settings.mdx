@@ -1,0 +1,136 @@
+---
+title: "settings.py — Configurazione Globale"
+description: "Unica sorgente di verità per coordinate ROI, soglie CV, percorsi e parametri del sistema."
+icon: "gear"
+---
+
+## Responsabilità
+
+`app/settings.py` è la **Single Source of Truth** per tutti i parametri configurabili. Non contiene logica: solo costanti. È l'unico concern trasversale che tutti i livelli possono leggere.
+
+**Livello**: Infrastruttura (letto da tutti i livelli; scritto solo dalla calibrazione)
+
+<Warning>
+`settings.py` viene modificato **a runtime** dal sistema di calibrazione tramite sostituzione regex. Non aggiungere logica Python che dipenda dall'ordine di valutazione delle variabili in questo file.
+</Warning>
+
+---
+
+## OCR e Template Matching
+
+```python
+TESSERACT_PATH = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+OCR_NUMBER_CONFIG = '--psm 7 -c tessedit_char_whitelist=0123456789.,'
+TEMPLATE_CARD_DIR = os.path.join(os.path.dirname(__file__), '..', 'templates', 'cards')
+TEMPLATE_MATCH_THRESHOLD = 0.80
+```
+
+---
+
+## Finestra PokerTH
+
+```python
+WINDOW_NAME = "PokerTH"
+WINDOW_SIZE = [0, 0, 1280, 720]   # [x_offset, y_offset, width, height]
+```
+
+Il programma ridimensiona ogni finestra PokerTH trovata a 1280×720 **una sola volta** per sessione.
+
+---
+
+## Dimensioni Carte
+
+```python
+CARD_W = 21   # larghezza ROI carta in pixel
+CARD_H = 27   # altezza ROI carta in pixel
+```
+
+Usate sia per le carte dell'hero che per quelle del board.
+
+---
+
+## Posizioni ROI — Riferimento Completo
+
+Tutte le coordinate sono in pixel relativi all'angolo in alto a sinistra della finestra PokerTH (1280×720).
+
+### Carte Hero — `HERO_CARD_POSITIONS`
+
+Lista di 2 elementi `[x, y]` — angolo superiore sinistro di ogni carta.
+
+| Indice | Carta |
+|---|---|
+| `[0]` | Prima carta hero |
+| `[1]` | Seconda carta hero |
+
+### Carte Board — `BOARD_CARD_POSITIONS`
+
+Lista di 5 elementi `[x, y]`.
+
+| Indice | Carta |
+|---|---|
+| `[0]–[2]` | Flop (1ª, 2ª, 3ª carta) |
+| `[3]` | Turn |
+| `[4]` | River |
+
+### Posizioni Dealer Button — `BUTTON_POSITIONS`
+
+Lista di 6 elementi `[x, y, w, h]` — una ROI per ogni seat (0=Hero, 1–5=Avversari).
+
+### Posizioni Bet — `BET_POSITIONS`
+
+Lista di 6 elementi `[x, y, w, h]`. OCR Tesseract viene applicato a ciascuna ROI bet.
+
+### Posizioni Giocatori — `PLAYER_POSITIONS`
+
+Lista di 6 elementi `[x, y, w, h]`. Usate per rilevare la presenza di un giocatore attivo (card-back detection HSV).
+
+### Piatto — `POT_AREA`
+
+```python
+POT_AREA = [457, 365, 105, 20]   # [x, y, w, h]
+```
+
+---
+
+## Soglie e Parametri di Rilevamento
+
+| Parametro | Default | Descrizione |
+|---|---|---|
+| `POT_RESET_THRESHOLD` | `5.0` | Pot minimo (€/chips) che deve essere stato raggiunto per considerare valida una transizione a nuova mano |
+| `COLOR_MIN_PIXELS` | `30` | Pixel HSV minimi per confermare un seme colorato (cuori, quadri, fiori) |
+| `COLOR_BLACK_MIN_PIXELS` | `20` | Soglia per le picche (bassa saturazione su sfondo verde) |
+| `PLAYER_CARD_BACK_MIN_PCT` | `10.0` | Percentuale minima pixel card-back per rilevare un avversario attivo |
+| `DEALER_WHITE_MIN_PCT` | `50.0` | Percentuale minima pixel bianchi per rilevare il dealer button |
+| `MAX_INVALID_READS` | `3` | Letture invalide consecutive tollerabili prima di accettare un'animazione come stato reale |
+
+---
+
+## Colori Suite (HSV)
+
+```python
+COLOR_HEARTS   = "#FF4444"   # rosso
+COLOR_DIAMONDS = "#4444FF"   # blu
+COLOR_CLUBS    = "#44AA44"   # verde
+COLOR_SPADES   = "#000000"   # nero (is_black=True nel match)
+```
+
+```python
+COLOR_CARD_BACK  = "#..."    # colore dorso carta degli avversari
+COLOR_TABLE_BG   = "#..."    # colore sfondo tavolo
+```
+
+I colori HEX vengono convertiti a range HSV da `hex_to_hsv_range()` in `image_utils.py`.
+
+---
+
+## Parametri Card-Back (Hero)
+
+```python
+# Rilevamento carte face-down dell'hero (holding)
+CARD_BACK_SAT_MIN = ...    # saturazione minima HSV
+CARD_BACK_SAT_MAX = ...    # saturazione massima HSV
+CARD_BACK_VAR_MIN = ...    # varianza luminosità minima (bassa = uniforme = nascosta)
+CARD_BACK_VAR_MAX = ...
+```
+
+Usati da `CardReader._is_player_cards_hidden()`.

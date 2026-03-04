@@ -1,0 +1,155 @@
+---
+title: "Observer, Thread Safety e Hash-Caching"
+description: "Come il pattern Observer disaccoppia i componenti, come il thread safety è garantito e il funzionamento del caching MD5."
+icon: "bolt"
+---
+
+## Il Pattern Observer
+
+Il sistema usa il **pattern Observer (Publisher-Subscriber)** per disaccoppiare completamente la pipeline di analisi dagli output (GUI, logger, futuri consumatori).
+
+### Struttura
+
+```
+StateTracker (Publisher)
+  │
+  ├─ on_state_changed(snapshot) → GuiOutput    (GUI + DecisionEngine)
+  └─ on_state_changed(snapshot) → FileLogger   (persistenza JSONL)
+```
+
+`StateTracker` non conosce i listener specifici — mantiene solo una lista generica di oggetti con il metodo `on_state_changed`. Aggiungere un nuovo output (es. un server WebSocket) significa aggiungere un listener senza toccare il core.
+
+### Interfaccia Listener
+
+```python
+# Qualsiasi listener deve implementare:
+class MyListener:
+    def on_state_changed(self, snapshot: dict) -> None:
+        ...
+
+    def on_table_closed(self, table_name: str) -> None:
+        ...
+```
+
+### Snapshot Immutabile
+
+`StateTracker._snapshot()` costruisce un dict con tutti i campi di stato. Lo snapshot è **immutabile per design** — è un dict Python passato per valore; i listener non devono modificarlo.
+
+```python
+{
+    "table_name":            str,
+    "game_state":            str,             # "Preflop"|"Flop"|"Turn"|"River"|"Unknown"
+    "player_cards":          list[Card],      # 0 o 2 carte hero
+    "table_cards":           list[Card],      # 0, 3, 4 o 5 carte board
+    "dealer_position":       int,             # 0–5, -1 se non trovato
+    "relative_position":     str,             # "EP"|"MP"|"CO"|"BU"|"SB"|"BB"|"Unknown"
+    "active_players":        list[int],       # indici seat attivi
+    "initial_active_players": int,            # giocatori a inizio mano
+    "hero_folded":           bool,
+    "hero_had_cards":        bool,
+    "hand_id":               int,             # contatore monotono
+    "player_bets":           dict[int,float], # seat → importo bet
+    "pot_amount":            float
+}
+```
+
+---
+
+## Thread Safety
+
+Il sistema ha tre thread concorrenti che accedono a risorse condivise:
+
+### Thread 1: Analysis Loop (daemon)
+
+Gira in un thread daemon avviato da `AnalysisEngine.start()`. Esegue l'intera pipeline CV → aggiorna `GameSession` → chiama `StateTracker.check()` → chiama `GuiOutput.on_state_changed()`.
+
+### Thread 2: GUI (tkinter mainloop)
+
+Il mainloop di tkinter è single-threaded. **Nessuna scrittura diretta da altri thread è sicura.**
+
+La soluzione è `widget.after(0, lambda: ...)`:
+
+```python
+# In GuiOutput.on_state_changed() — chiamato dal thread daemon
+self._gui.after(0, lambda snap=snapshot, dec=decision, t=ts:
+    self._gui._on_snapshot(snap, dec, our_turn, t)
+)
+```
+
+`after(0, callback)` accoda il callback nella coda eventi del mainloop tkinter — verrà eseguito nel thread GUI al prossimo ciclo. Zero ritardo, thread-safe.
+
+### Thread 3: Calibrazione (lettura asincrona)
+
+`CalibrationWindow` avvia un thread separato per leggere la ROI con feedback CV (OCR o HSV) senza bloccare l'UI:
+
+```python
+def _start_read_thread(self):
+    t = threading.Thread(target=self._read_in_bg, daemon=True)
+    t.start()
+
+def _read_in_bg(self):
+    result = self._current_param["read_fn"](self._cv_image)
+    self.after(0, lambda r=result: self._set_feedback(r))
+```
+
+Anche qui, la scrittura al widget usa `after(0, lambda:...)`.
+
+### FileLogger: Lock Interno
+
+```python
+class FileLogger:
+    def __init__(self):
+        self._lock = threading.Lock()
+
+    def log(self, enriched_snapshot: dict):
+        with self._lock:
+            self._file.write(json.dumps(enriched_snapshot, default=str) + "\n")
+            self._file.flush()
+```
+
+Il lock protegge il file JSONL da write concorrenti in scenari multi-tavolo (ogni `GuiOutput.on_state_changed()` viene chiamato dal thread daemon e scrive sul file condiviso).
+
+---
+
+## Hash-Caching MD5
+
+### Principio
+
+Ogni ROI letta ripetutamente ha un hash MD5 dell'ultimo frame processato. Se l'hash non cambia tra un ciclo e il successivo, la lettura viene saltata e viene restituito il risultato precedente.
+
+```python
+import hashlib
+
+roi = image[y:y+h, x:x+w]
+current_hash = hashlib.md5(roi.tobytes()).hexdigest()
+
+if current_hash == self._last_hash:
+    return self._last_result   # skip completo
+
+# Processo la ROI...
+self._last_hash = current_hash
+self._last_result = result
+```
+
+### Dove viene usato
+
+| Cache | Variabile | ROI coperta |
+|---|---|---|
+| Carte hero | `_last_player_hash` | 2 ROI carte hero concatenate |
+| Carte board | `_last_table_hash` | bounding box delle 5 posizioni |
+| Bet dei giocatori | `_last_bets_hash` | concatenazione 6 ROI bet |
+| Piatto | `_last_pot_hash` | `POT_AREA = [457, 365, 105, 20]` |
+
+### Doppio ruolo
+
+Il caching serve due scopi distinti:
+
+1. **Ottimizzazione CPU** — salta OCR e template matching quando niente è cambiato. A 1 Hz il guadagno è modesto, ma diventa rilevante con N tavoli.
+
+2. **Graceful degradation** — durante animazioni (flip carte, distribuzione), i frame intermedi producono letture corrotte. L'hash cambia, ma la lettura fallisce o è `"Unknown"`. Il debouncing (`MAX_INVALID_READS = 3`) combina i due meccanismi: *"mantieni l'ultimo stato valido finché non sono sicuro che sia cambiato davvero"*.
+
+### Isolamento per istanza (multi-tavolo)
+
+Ogni `GameSession` ha il suo `CardReader` e `TableReader`. Le cache sono attributi d'istanza, **non di classe**. Due tavoli che mostrano lo stesso rango di carta hanno cache completamente separate — nessuna contaminazione.
+
+I template PNG, invece, sono attributi **di classe** (`CardReader._templates`) e condivisi tra tutte le istanze per efficienza. Il caricamento è protetto da double-checked locking.

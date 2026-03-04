@@ -1,0 +1,126 @@
+---
+title: "Installazione e Avvio"
+description: "Come installare le dipendenze e avviare PokerTH Companion su Windows."
+icon: "wrench"
+---
+
+<Warning>
+**Windows only.** Il programma usa Windows Win32 API (`PrintWindow`, `GetWindowDC`). Non funziona su macOS o Linux.
+</Warning>
+
+## Prerequisiti
+
+| Requisito | Versione minima | Note |
+|---|---|---|
+| Python | 3.9+ | Raccomandato 3.11 |
+| PokerTH | qualsiasi | Deve essere avviato prima del Companion |
+| Tesseract OCR | 5.x | Installazione separata — vedi Step 2 |
+| Risoluzione schermo | — | PokerTH verrà ridimensionato a 1280×720 automaticamente |
+
+## Setup
+
+<Steps>
+  <Step title="Clona il repository">
+    ```bash
+    git clone https://github.com/walter-algorave/PokerTHComp.git
+    cd PokerTHComp
+    ```
+  </Step>
+
+  <Step title="Installa Tesseract OCR">
+    Tesseract **non** viene installato tramite pip. Scaricalo dall'installer UB-Mannheim e installalo nella path di default:
+
+    ```
+    C:\Program Files\Tesseract-OCR\tesseract.exe
+    ```
+
+    <Note>
+    Se installi Tesseract in una path diversa, aggiorna `TESSERACT_PATH` in `app/settings.py`.
+    </Note>
+  </Step>
+
+  <Step title="Installa le dipendenze Python">
+    ```bash
+    pip install -r requirements.txt
+    ```
+
+    Le dipendenze installate:
+
+    ```
+    numpy>=1.24.0
+    opencv-python>=4.8.0
+    Pillow>=9.0.0
+    pytesseract>=0.3.10
+    pywin32>=306
+    customtkinter>=5.2.2
+    ```
+  </Step>
+
+  <Step title="Avvia PokerTH">
+    Apri PokerTH e crea o entra in una partita prima di avviare il Companion. Il programma trova le finestre automaticamente tramite il titolo della finestra.
+
+    <Tip>
+    Per il rilevamento dei colori delle carte, abilita il **mazzo 4 colori** nelle impostazioni di PokerTH: `Impostazioni → Tavolo → Mazzo 4 colori`. Questo corrisponde ai colori usati dal Companion (♥ rosso, ♦ blu, ♣ verde, ♠ bianco).
+    </Tip>
+  </Step>
+
+  <Step title="Avvia PokerTH Companion">
+    ```bash
+    python -m app.main
+    ```
+
+    L'interfaccia si apre in dark mode. Clicca **Avvia Analisi** nella sidebar sinistra.
+  </Step>
+</Steps>
+
+## Struttura del progetto
+
+```
+PokerTHComp/
+├── app/
+│   ├── main.py                  ← entry point
+│   ├── models.py                ← Card, Colors, Screenshot
+│   ├── settings.py              ← coordinate ROI, soglie, percorsi
+│   ├── calibration_params.py   ← definizione parametri calibrazione
+│   ├── calibration.py          ← finestra calibrazione interattiva
+│   ├── gui.py                  ← finestra principale + GuiOutput
+│   ├── gui_views.py            ← MultiTableView, DetailView, TableCard
+│   ├── capture/
+│   │   └── screen_capture.py   ← cattura Win32 con PrintWindow
+│   ├── engine/
+│   │   ├── session.py          ← AnalysisEngine, GameSession, StateTracker
+│   │   ├── hand_history.py     ← HandHistoryTracker
+│   │   ├── decision_engine.py  ← PreflopDecisionEngine
+│   │   ├── preflop_tables.py   ← tabelle GTO + seat_to_position
+│   │   └── file_logger.py      ← logging JSONL
+│   └── vision/
+│       ├── card_reader.py      ← lettura carte hero + board
+│       ├── table_reader.py     ← dealer, giocatori attivi, bet, pot
+│       └── image_utils.py      ← funzioni CV pure
+├── templates/cards/             ← template PNG dei ranghi
+├── logs/                        ← sessioni JSONL
+└── tests/                       ← 112 test pytest
+```
+
+## Risoluzione dei problemi
+
+<AccordionGroup>
+  <Accordion title="TesseractNotFoundError all'avvio" icon="circle-xmark">
+    Tesseract non è nella path configurata. Verifica che `TESSERACT_PATH` in `app/settings.py` punti all'eseguibile corretto:
+    ```python
+    TESSERACT_PATH = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+    ```
+  </Accordion>
+  <Accordion title="Nessuna finestra trovata" icon="circle-xmark">
+    Il programma cerca finestre con titolo che contiene `"PokerTH"`. Assicurati che PokerTH sia avviato e che nessun altro programma stia bloccando `EnumWindows`.
+  </Accordion>
+  <Accordion title="Carte non rilevate correttamente" icon="circle-xmark">
+    Le coordinate ROI potrebbero non corrispondere al tuo monitor. Apri la **Finestra di Calibrazione** (pulsante Calibrazione nella sidebar) e ricalibra le posizioni delle carte hero e board.
+  </Accordion>
+  <Accordion title="ImportError su win32con / win32gui" icon="circle-xmark">
+    `pywin32` richiede un'installazione post-install. Esegui:
+    ```bash
+    python Scripts/pywin32_postinstall.py -install
+    ```
+  </Accordion>
+</AccordionGroup>

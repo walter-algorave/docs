@@ -1,97 +1,68 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: "PokerTH Companion"
+description: "Sistema di Analisi passivo e Strumento di Supporto Decisionale (DSS) per Texas Hold'em — basato su Computer Vision e ingegneria del software SOLID."
 ---
 
-## Setting up
+## Cos'è PokerTH Companion?
 
-Get your documentation site up and running in minutes.
+**PokerTH Companion** è un'applicazione Windows che osserva passivamente una o più finestre di PokerTH (simulatore Texas Hold'em open-source) tramite **Computer Vision**, estrae lo stato di gioco in tempo reale senza iniettare codice e fornisce suggerimenti decisionali preflop basati su tabelle GTO.
 
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
+Il sistema è progettato come caso di studio accademico sull'applicazione di tecniche CV all'estrazione dati da applicazioni desktop a scatola chiusa.
 
-## Make it yours
+<Note>
+Il programma è un **Strumento di Supporto Decisionale passivo** — non interagisce mai con PokerTH, non simula input e non viola nessuna policy. PokerTH è open-source e non usa denaro reale.
+</Note>
 
-Design a docs site that looks great and empowers your users.
+## Architettura a colpo d'occhio
 
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+```
+Presentazione  →  Engine (applicazione)  →  Vision (dominio)  →  Infrastruttura
+   gui.py            session.py              card_reader.py       screen_capture.py
+   gui_views.py       hand_history.py         table_reader.py      settings.py
+   calibration.py     decision_engine.py      image_utils.py       templates/cards/
+```
+
+Il ciclo di analisi gira a **1 Hz** in un thread daemon: cattura → estrae stato → confronta → notifica via Observer → GUI aggiorna.
+
+## Esplora la documentazione
+
+<CardGroup cols={3}>
+  <Card title="Installazione" icon="wrench" href="/installazione">
+    Setup di Python, OpenCV, Tesseract e avvio del programma
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="Architettura" icon="sitemap" href="/architettura">
+    Diagramma a 4 livelli SOLID, data flow e design pattern
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  <Card title="Computer Vision" icon="eye" href="/concetti/computer-vision">
+    PrintWindow, HSV, template matching, OCR Tesseract
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  <Card title="Calibrazione" icon="sliders" href="/calibrazione/panoramica">
+    Calibrazione interattiva degli artefatti ROI con feedback live
   </Card>
-</Columns>
+  <Card title="DSS Preflop" icon="cards" href="/dss/panoramica">
+    Tabelle GTO di Corropoli, posizioni, decision engine stateless
+  </Card>
+  <Card title="Moduli" icon="puzzle-piece" href="/moduli/models">
+    Documentazione tecnica di ogni modulo del codebase
+  </Card>
+</CardGroup>
 
-## Create beautiful pages
+## Stack tecnologico
 
-Everything you need to create world-class documentation.
+| Libreria | Versione | Ruolo |
+|---|---|---|
+| `opencv-python` | ≥ 4.8 | Template matching, HSV, preprocessing immagini |
+| `pytesseract` / Tesseract | ≥ 0.3.10 | OCR per valori numerici (bet, pot) |
+| `pywin32` | ≥ 306 | `PrintWindow`, `EnumWindows`, cattura background |
+| `customtkinter` | ≥ 5.2.2 | GUI moderna in dark mode |
+| `Pillow` | ≥ 9.0 | Conversione buffer Win32 → numpy array |
+| `numpy` | ≥ 1.24 | Manipolazione array immagine |
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
-  </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
-  </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
-  </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
-  </Card>
-</Columns>
+## Limiti attuali
 
-## Need inspiration?
-
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+<Warning>
+- **Windows only** — dipende da Win32 API (`PrintWindow`, `GetWindowDC`)
+- **Risoluzione fissa** — 1280×720 px (il programma ridimensiona PokerTH automaticamente)
+- **Solo preflop** — il DSS non copre flop/turn/river
+- **No 3-bet / limp** — la logica VS_RAISE assume un singolo raiser
+</Warning>

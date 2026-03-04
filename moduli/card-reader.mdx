@@ -1,0 +1,116 @@
+---
+title: "card_reader.py — Lettura Carte"
+description: "CardReader: lettura carte hero e board con hash-caching MD5, lazy template loading e debouncing."
+icon: "cards"
+---
+
+## Responsabilità
+
+`app/vision/card_reader.py` legge le **carte dell'hero** (2 hole cards) e le **carte del board** (fino a 5) da un fotogramma BGR. Gestisce hash-caching, debouncing per le animazioni e lazy loading thread-safe dei template.
+
+**Livello**: Dominio  
+**Pattern**: Per-instance cache, class-level template cache, double-checked locking
+
+---
+
+## Struttura Cache
+
+```
+CardReader
+├── [Class-level, condiviso tra tutti i tavoli]
+│   ├── _templates: dict         ← template PNG caricati una volta
+│   ├── _templates_loaded: bool
+│   └── _templates_lock: Lock    ← double-checked locking
+│
+└── [Instance-level, per ogni GameSession / tavolo]
+    ├── _last_player_hash         ← MD5 delle 2 ROI carte hero
+    ├── _last_valid_player_cards  ← ultimo risultato valido
+    ├── _invalid_read_count       ← counter debounce hero
+    ├── _last_table_hash          ← MD5 bounding box board
+    ├── _last_table_cards         ← ultimo board valido
+    └── _invalid_board_count      ← counter debounce board
+```
+
+---
+
+## `read_player_cards(image, bypass_cache, positions) → list[Card]`
+
+### Flusso
+
+```
+1. Estrai 2 ROI da HERO_CARD_POSITIONS
+2. Calcola MD5(roi1.tobytes() + roi2.tobytes())
+3. Se hash invariato → return _last_valid_player_cards
+4. _is_player_cards_hidden(roi1, roi2)?
+   ├─ Sì → _invalid_read_count++
+   │       Se < MAX_INVALID_READS → return _last_valid_player_cards
+   │       Altrimenti → return []  (fold accettato)
+   └─ No (face-up) → _card_info(roi1), _card_info(roi2)
+       Se entrambe valide → cache + return [card1, card2]
+       Altrimenti → _invalid_read_count++; return _last_valid_player_cards
+```
+
+### `_is_player_cards_hidden(card1_img, card2_img) → bool`
+
+Analizza HSV saturation e varianza luminosità di entrambe le ROI. Le carte face-down mostrano un pattern di colore uniforme e saturo (card-back). Le carte face-up hanno alta varianza (bianco + colore seme).
+
+---
+
+## `read_table_cards(image, bypass_filter, positions) → list[Card]`
+
+### Flusso
+
+```
+1. Calcola MD5 del bounding box delle 5 posizioni
+2. Se hash invariato → return _last_table_cards
+3. Per ogni posizione (0–4):
+   ├─ is_card_empty(roi)? → skip (posizione vuota)
+   └─ _card_info(roi):
+       ├─ Valida → appendi alla lista
+       └─ Invalida → appendi Card("X", Colors.Error) come placeholder
+4. bypass_filter=True → return tutto (calibrazione)
+5. Filtro plausibilità: n_cards ∈ {0, 3, 4, 5}?
+   ├─ No → _invalid_board_count++
+   │       Se < MAX_INVALID_READS → return _last_table_cards
+   │       Altrimenti → return []
+   └─ Sì → ma contiene Colors.Error?
+       ├─ Sì → _invalid_board_count++; return _last_table_cards
+       └─ No → cache + return cards
+```
+
+---
+
+## `_card_info(image) → Card`
+
+```python
+gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+value = self._get_card_value(gray)    # template matching
+color = self._get_card_color(image)   # HSV suit detection
+return Card(value, color)
+```
+
+### `_get_card_value(gray_image) → str`
+
+Lazy-loads i template la prima volta con double-checked locking, poi chiama `match_card_template()`. Restituisce rango `"A"–"2"` o `"X"`.
+
+### `_get_card_color(image) → Colors`
+
+Converte BGR → HSV, poi chiama `count_color_pixels()` per ciascun seme nell'ordine: Hearts → Diamonds → Clubs → Spades. Il primo seme che supera la soglia (`COLOR_MIN_PIXELS` o `COLOR_BLACK_MIN_PIXELS`) vince. Restituisce `Colors.Error` se nessuno supera la soglia.
+
+---
+
+## Gestione Multi-Tavolo
+
+Ogni `GameSession` crea il proprio `CardReader()`. Le cache istanza sono completamente indipendenti per N tavoli paralleli. I template PNG sono condivisi:
+
+```python
+@classmethod
+def _ensure_templates_loaded(cls):
+    if not cls._templates_loaded:               # check 1 (no lock)
+        with cls._templates_lock:
+            if not cls._templates_loaded:       # check 2 (con lock)
+                cls._templates = load_card_templates(TEMPLATE_CARD_DIR)
+                cls._templates_loaded = True
+```
+
+Il double-checked locking evita che N thread (per N tavoli) carichino i template in parallelo al primo fotogramma.

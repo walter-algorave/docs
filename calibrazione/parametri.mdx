@@ -1,0 +1,108 @@
+---
+title: "Parametri Calibrabili"
+description: "Tabella completa dei 27 parametri di calibrazione, categorie, tipo ROI e colore overlay."
+icon: "list-check"
+---
+
+## Riferimento Completo Parametri
+
+### Carte Hero — `HERO_CARD_POSITIONS`
+
+| Parametro | Chiave `settings.py` | Tipo ROI | Feedback |
+|---|---|---|---|
+| Carta Hero 1 | `HERO_CARD_POSITIONS[0]` | `[x, y]` | Rango + seme (template match + HSV) |
+| Carta Hero 2 | `HERO_CARD_POSITIONS[1]` | `[x, y]` | Rango + seme (template match + HSV) |
+
+La dimensione della ROI è fissa: **21×27 px** (`CARD_W × CARD_H`).  
+Overlay: `#00FF88` (verde acqua)
+
+---
+
+### Carte Board — `BOARD_CARD_POSITIONS`
+
+| Parametro | Chiave `settings.py` | Posizione nel Board |
+|---|---|---|
+| Carta Board 1 | `BOARD_CARD_POSITIONS[0]` | Flop 1ª carta |
+| Carta Board 2 | `BOARD_CARD_POSITIONS[1]` | Flop 2ª carta |
+| Carta Board 3 | `BOARD_CARD_POSITIONS[2]` | Flop 3ª carta |
+| Carta Board 4 | `BOARD_CARD_POSITIONS[3]` | Turn |
+| Carta Board 5 | `BOARD_CARD_POSITIONS[4]` | River |
+
+Tipo ROI: `[x, y]` — dimensione fissa 21×27 px.  
+Overlay: `#00FF88` (verde acqua)
+
+---
+
+### Dealer Button — `BUTTON_POSITIONS`
+
+| Parametro | Chiave `settings.py` | Seat |
+|---|---|---|
+| Button Seat 0 | `BUTTON_POSITIONS[0]` | Hero |
+| Button Seat 1 | `BUTTON_POSITIONS[1]` | Avversario 1 |
+| Button Seat 2 | `BUTTON_POSITIONS[2]` | Avversario 2 |
+| Button Seat 3 | `BUTTON_POSITIONS[3]` | Avversario 3 |
+| Button Seat 4 | `BUTTON_POSITIONS[4]` | Avversario 4 |
+| Button Seat 5 | `BUTTON_POSITIONS[5]` | Avversario 5 |
+
+Tipo ROI: `[x, y, w, h]`  
+Feedback: `"Bianco: XX.X% — Dealer trovato ✓"` oppure `"Bianco: XX.X% — Nessun dealer"`  
+Overlay: `#FF6600` (arancione)
+
+---
+
+### Bet Giocatori — `BET_POSITIONS`
+
+| Parametro | Chiave `settings.py` | Seat |
+|---|---|---|
+| Bet Seat 0 | `BET_POSITIONS[0]` | Hero |
+| Bet Seat 1 | `BET_POSITIONS[1]` | Avversario 1 |
+| Bet Seat 2 | `BET_POSITIONS[2]` | Avversario 2 |
+| Bet Seat 3 | `BET_POSITIONS[3]` | Avversario 3 |
+| Bet Seat 4 | `BET_POSITIONS[4]` | Avversario 4 |
+| Bet Seat 5 | `BET_POSITIONS[5]` | Avversario 5 |
+
+Tipo ROI: `[x, y, w, h]`  
+Feedback: `"OCR: 2.50"` oppure `"OCR: nessun valore"`  
+Overlay: `#FFDD00` (giallo)
+
+---
+
+### Presenza Giocatori — `PLAYER_POSITIONS`
+
+| Parametro | Chiave `settings.py` | Seat |
+|---|---|---|
+| Player Seat 0 | `PLAYER_POSITIONS[0]` | Hero |
+| Player Seat 1 | `PLAYER_POSITIONS[1]` | Avversario 1 |
+| Player Seat 2 | `PLAYER_POSITIONS[2]` | Avversario 2 |
+| Player Seat 3 | `PLAYER_POSITIONS[3]` | Avversario 3 |
+| Player Seat 4 | `PLAYER_POSITIONS[4]` | Avversario 4 |
+| Player Seat 5 | `PLAYER_POSITIONS[5]` | Avversario 5 |
+
+Tipo ROI: `[x, y, w, h]`  
+Feedback: `"Card-back rilevato ✓ (45 pixel)"` oppure `"Nessun giocatore"`  
+Overlay: `#CC44FF` (viola)
+
+---
+
+### Piatto — `POT_AREA`
+
+| Parametro | Chiave `settings.py` | Tipo ROI |
+|---|---|---|
+| Pot | `POT_AREA` | `[x, y, w, h]` |
+
+Feedback: `"OCR: 15.00"` oppure `"OCR: 0"`  
+Overlay: `#FF4466` (rosso-rosa)
+
+---
+
+## Riepilogo
+
+| Categoria | N° Parametri | Tipo ROI | Funzione CV |
+|---|---|---|---|
+| Carte Hero | 2 | `[x, y]` | Template match + HSV |
+| Carte Board | 5 | `[x, y]` | Template match + HSV |
+| Dealer Button | 6 | `[x, y, w, h]` | Conteggio pixel bianchi |
+| Bet Giocatori | 6 | `[x, y, w, h]` | OCR Tesseract |
+| Presenza Giocatori | 6 | `[x, y, w, h]` | HSV card-back |
+| Piatto | 1 | `[x, y, w, h]` | OCR Tesseract |
+| **Totale** | **26** | — | — |

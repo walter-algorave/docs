@@ -1,0 +1,96 @@
+---
+title: "models.py — Strutture Dati"
+description: "Le entità fondamentali del dominio: Card, Colors e Screenshot."
+icon: "database"
+---
+
+## Responsabilità
+
+`app/models.py` definisce le **strutture dati immutabili** condivise tra tutti i livelli. Non contiene logica di business: è il vocabolario del dominio.
+
+**Livello**: Trasversale (usato da Vision, Engine, GUI)
+
+---
+
+## `Colors` — Enum dei Semi
+
+```python
+class Colors(Enum):
+    Hearts   = "H"
+    Diamonds = "D"
+    Clubs    = "C"
+    Spades   = "S"
+    Error    = "X"
+```
+
+I valori stringa (`"H"`, `"D"`, ...) seguono la notazione standard delle hand history (`HA` = Asso di Cuori). `Colors.Error` segnala una lettura CV fallita — usato come sentinel value invece di `None` per evitare `NoneType` errors a cascata.
+
+---
+
+## `Card` — Carta da Gioco
+
+```python
+@dataclass
+class Card:
+    value: str    # rango: "A","K","Q","J","T","9","8","7","6","5","4","3","2","X"
+    color: Colors # seme
+
+    def __str__(self) -> str:
+        return f"{self.color.value}{self.value}"  # es: "HA", "DK", "C2"
+
+    def __eq__(self, other) -> bool:
+        return self.value == other.value and self.color == other.color
+```
+
+### Valori dei ranghi
+
+| Valore | Carta |
+|---|---|
+| `"A"` | Asso |
+| `"K"` | Re |
+| `"Q"` | Regina |
+| `"J"` | Fante |
+| `"T"` | Dieci |
+| `"9"`–`"2"` | Carte numeriche |
+| `"X"` | Lettura fallita / placeholder |
+
+### Formato `__str__`
+
+`str(Card("A", Colors.Hearts))` → `"HA"` — seme seguito da rango. Questo è il formato usato nei log JSONL e nelle hand history.
+
+<Note>
+`Card` è deliberatamente senza validazione — non verifica che `value` sia un rango legale. La validazione avviene in `hand_key()` in `preflop_tables.py`.
+</Note>
+
+---
+
+## `Screenshot` — Contenitore Temporaneo
+
+```python
+class Screenshot:
+    def __init__(self, tableName: str, filename: str):
+        self.tableName = tableName  # es: "Tavolo-1"
+        self.filename  = filename   # path al file PNG temporaneo
+
+    def __del__(self):
+        os.remove(self.filename)    # pulizia automatica
+```
+
+`Screenshot` agisce come **resource manager** per i file PNG temporanei creati da `ScreenCapture.grab()`. Quando l'oggetto esce dallo scope (o viene garbage collected), il file temporaneo viene eliminato automaticamente tramite `__del__`.
+
+Questo garantisce che nessun file temporaneo si accumuli in sessioni lunghe o in caso di eccezioni.
+
+---
+
+## Interazioni con altri moduli
+
+```
+screen_capture.py  → crea Screenshot
+session.py         → riceve Screenshot; crea e mantiene list[Card]
+card_reader.py     → restituisce list[Card]
+table_reader.py    → legge Card dall'immagine
+hand_history.py    → riceve snapshot["player_cards"] (list[Card])
+preflop_tables.py  → riceve Card per hand_key()
+gui_views.py       → legge Card.value e Card.color per display
+file_logger.py     → serializza Card via json.dumps(default=str)
+```

@@ -1,0 +1,88 @@
+---
+title: "Panoramica Calibrazione"
+description: "Perché è necessaria la calibrazione ROI, cosa può essere calibrato e come funziona il sistema di patch live."
+icon: "crosshairs"
+---
+
+## Il Problema delle Coordinate Hardcoded
+
+Il sistema riconosce le carte e i valori leggendo **ROI (Regions of Interest)** — finestre di pixel a coordinate fisse nella finestra PokerTH.
+
+Le coordinate di default in `settings.py` sono state calibrate per una specifica configurazione di monitor (risoluzione 1280×720 in coordinate fisiche). **Su monitor diversi o con configurazioni DPI diverse**, queste coordinate possono essere spostare di decine di pixel, causando:
+
+- Carte non riconosciute (ROI cattura sfondo invece della carta)
+- OCR bet/pot errato (ROI cattura la carta invece del numero)
+- Dealer non rilevato (ROI cattura area vuota)
+
+---
+
+## La Soluzione: Calibrazione Interattiva
+
+Il sistema di calibrazione di PokerTH Companion permette di **ridefinire graficamente ogni ROI** sul fotogramma live di PokerTH, con feedback immediato dalla stessa funzione CV usata in produzione.
+
+### Principi
+
+1. **Drag-to-draw**: si disegna la ROI direttamente sull'immagine
+2. **Feedback live**: la ROI appena disegnata viene letta e il risultato è mostrato immediatamente
+3. **Salvataggio persistente**: le coordinate modificate vengono scritte in `settings.py` via regex — persistono ai riavvii senza bisogno di un file di configurazione separato
+4. **Ripristino**: ogni parametro può essere ripristinato alla baseline della sessione
+
+---
+
+## Il Sistema Regex-Patch
+
+```python
+# calibration_params._patch_list_item("HERO_CARD_POSITIONS", 0, [105, 198])
+
+# Questo modifica settings.py da:
+HERO_CARD_POSITIONS = [[100, 200], [130, 200]]
+
+# a:
+HERO_CARD_POSITIONS = [[105, 198], [130, 200]]
+```
+
+`settings.py` viene modificato **in-place** con una sostituzione regex precisa sull'elemento specifico della lista. Dopo la scrittura, il modulo viene ricaricato con `importlib.reload(settings)` — le nuove coordinate saranno attive al prossimo ciclo di analisi senza riavviare il programma.
+
+---
+
+## Cosa Può Essere Calibrato
+
+Il sistema espone **27 parametri** in 6 categorie:
+
+<CardGroup cols={2}>
+  <Card title="Carte Hero" icon="user">
+    2 parametri — coordinate `[x, y]` dell'angolo superiore sinistro di ogni carta. La dimensione (21×27 px) è fissa.
+  </Card>
+  <Card title="Carte Board" icon="table">
+    5 parametri — coordinate `[x, y]` per Flop 1/2/3, Turn, River.
+  </Card>
+  <Card title="Dealer Button" icon="circle-dot">
+    6 parametri — ROI `[x, y, w, h]` una per seat (0=Hero, 1–5=Avversari).
+  </Card>
+  <Card title="Bet Giocatori" icon="coins">
+    6 parametri — ROI `[x, y, w, h]` per l'importo della scommessa di ogni seat.
+  </Card>
+  <Card title="Presenza Giocatori" icon="users">
+    6 parametri — ROI `[x, y, w, h]` per il rilevamento card-back di ogni avversario.
+  </Card>
+  <Card title="Piatto" icon="sack-dollar">
+    1 parametro — ROI `[x, y, w, h]` per la lettura OCR del pot totale.
+  </Card>
+</CardGroup>
+
+---
+
+## Quando Calibrare
+
+<Tip>
+Calibra quando noti uno di questi comportamenti:
+- "Carta non riconosciuta" nel log mentre le carte sono visibili sullo schermo
+- Il pot è 0 o sempre uguale anche quando cambia
+- La posizione del dealer non viene rilevata
+- Giocatori attivi non vengono contati correttamente
+</Tip>
+
+La calibrazione è anche utile dopo:
+- Un cambio di monitor o risoluzione
+- Un aggiornamento di PokerTH che ha modificato il layout del tavolo
+- Il primo avvio su un nuovo sistema

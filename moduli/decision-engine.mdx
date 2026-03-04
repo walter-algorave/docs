@@ -1,0 +1,100 @@
+---
+title: "decision_engine.py — Engine Decisionale"
+description: "PreflopDecisionEngine: lookup stateless su tabelle GTO con catena di guardie."
+icon: "brain"
+---
+
+## Responsabilità
+
+`app/engine/decision_engine.py` valuta lo stato corrente e restituisce una raccomandazione di azione preflop. È **completamente stateless** — tutta la memoria è in `HandHistoryTracker`.
+
+**Livello**: Applicazione
+
+---
+
+## `Decision` — Enum delle Azioni
+
+| Valore | Stringa | Significato |
+|---|---|---|
+| `RAISE` | `"RAISE"` | Rilancia |
+| `CALL` | `"CALL"` | Chiama |
+| `FOLD_CHECK` | `"FOLD/CHECK"` | Passa/Folda |
+| `FOLDED` | `"FOLDED"` | L'hero ha già folded |
+| `WAIT` | `"Aspetta il prossimo Preflop"` | Dati insufficienti o fase non preflop |
+| `COMPROMISED` | `"Lettura anomala"` | Lettura CV corrotta in questa mano |
+| `UNKNOWN` | `"—"` | Dati non ancora disponibili |
+
+---
+
+## `PreflopDecisionEngine`
+
+### `evaluate(snapshot) → Decision`
+
+Catena di guardie in ordine di priorità:
+
+```python
+# 1. Non siamo al Preflop?
+if snapshot["game_state"] != "Preflop":
+    return Decision.WAIT
+
+# 2. Sistema non ancora calibrato?
+if not history.is_calibrated():
+    return Decision.WAIT
+
+# 3. Lettura compromessa in questa mano?
+if history.is_hand_compromised():
+    return Decision.COMPROMISED
+
+# 4. L'hero non ha 2 carte?
+if len(snapshot["player_cards"]) < 2:
+    return Decision.WAIT
+
+# 5. Hand key non valida?
+key = hand_key(card1, card2)
+if key == "":
+    return Decision.WAIT
+
+# 6. Posizione sconosciuta?
+if snapshot["relative_position"] == "Unknown":
+    return Decision.WAIT
+
+# 7. Lookup nella tabella corretta
+n_active = history.n_players_at_start()
+hero_pos = normalize_position(snapshot["relative_position"], n_active)
+
+if history.is_rfi():
+    if hero_pos == "BB":
+        return Decision.FOLD_CHECK   # BB in RFI → check/fold gratuito
+    table = RFI_TABLES.get(hero_pos)
+else:
+    raiser_pos = history.raiser_position()
+    table = VS_RAISE_TABLES.get(f"VS_{raiser_pos}")
+
+action = lookup(table, key)   # "raise" / "call" / "fold"
+return _ACTION_TO_DECISION[action]
+```
+
+### `_ACTION_TO_DECISION`
+
+```python
+{
+    "raise": Decision.RAISE,
+    "call":  Decision.CALL,
+    "fold":  Decision.FOLD_CHECK
+}
+```
+
+---
+
+## Caso Speciale: BB in RFI
+
+Quando l'hero è in BB e non c'è stato nessun raise (`is_rfi() == True`), la mano è passata a lui con la possibilità di check gratuito — non c'è nessun entry in `RFI_TABLES` per BB. Il risultato è sempre `Decision.FOLD_CHECK` (=check nel contesto BB).
+
+---
+
+## Output per la GUI
+
+`GuiOutput` riceve il `Decision` da `evaluate()` e:
+- Controlla prima `is_hero_folded()` — se True sovrascrive con `Decision.FOLDED`
+- Passa `Decision` a `dashboard._on_snapshot()` via `after(0, lambda:...)`
+- `DetailView` e `TableCard` usano `BADGE_COLORS[Decision]` per il colore del badge

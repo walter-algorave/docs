@@ -1,0 +1,79 @@
+---
+title: "Il DSS Preflop"
+description: "Architettura del Decision Support System: tabelle GTO deterministiche, enum Decision e separazione dalla GUI."
+icon: "brain"
+---
+
+## Cos'è il DSS?
+
+Il **Decision Support System (DSS)** è il componente che trasforma lo stato del gioco estratto da Computer Vision in una **raccomandazione di azione**. Non è un bot — non clicca nulla, non interagisce con PokerTH. Suggerisce all'utente umano cosa fare.
+
+<Note>
+Il DSS è basato su **tabelle GTO deterministiche** — non usa Machine Learning, reti neurali o modelli probabilistici. Data una mano e una situazione, la risposta è sempre la stessa. Questo lo rende trasparente, verificabile e accreditabile.
+</Note>
+
+## Strategia GTO di Corropoli
+
+Le tabelle strategiche provengono da **Stefano Corropoli**, autore specializzato in Game Theory Optimal (GTO) per Texas Hold'em 6-max. La strategia copre:
+
+- **RFI (Raise First In)**: quale mano aprire per prima da ogni posizione
+- **VS_RAISE**: come rispondere a un raise aperto, in funzione della posizione del raiser
+
+Le tabelle sono implementate in `preflop_tables.py` come dizionari Python.
+
+---
+
+## Architettura Disaccoppiata
+
+```
+GUI (gui.py)
+  └─ GuiOutput.on_state_changed(snapshot)
+       ├─ HandHistoryTracker.update(snapshot)    ← aggiorna storia per-mano
+       ├─ PreflopDecisionEngine.evaluate(snapshot) ← lookup tabella → Decision
+       └─ dashboard._on_snapshot(decision)       ← aggiorna badge GUI
+```
+
+**La GUI non conosce la strategia**: `PokerTHGui` e `DetailView` non importano mai `preflop_tables.py` o `PreflopDecisionEngine`. Ricevono solo il `Decision` enum già calcolato.
+
+Questo disaccoppiamento permette di:
+- Cambiare la strategia senza toccare la GUI
+- Aggiungere strategie postflop senza modificare l'architettura
+- Testare il DSS in isolamento completo
+
+---
+
+## `Decision` — Enum delle Azioni
+
+| Enum | Stringa visualizzata | Badge |
+|---|---|---|
+| `RAISE` | `"RAISE"` | Verde |
+| `CALL` | `"CALL"` | Blu |
+| `FOLD_CHECK` | `"FOLD/CHECK"` | Grigio |
+| `FOLDED` | `"FOLDED"` | Grigio scuro |
+| `WAIT` | `"Aspetta il prossimo Preflop"` | Neutro scuro |
+| `COMPROMISED` | `"Lettura anomala"` | Rosso errore |
+| `UNKNOWN` | `"—"` | Neutro |
+
+---
+
+## Limitazioni Attuali
+
+<Warning>
+Il DSS copre **solo il preflop** in scenari RFI (nessun raise precedente) o vs un singolo raise aperto.
+
+**Non gestisce:**
+- Flop, Turn, River
+- Scenari di 3-bet
+- Limping (limp/complete)
+- Multi-way pots (assumed heads-up vs raiser)
+</Warning>
+
+---
+
+## Sviluppi Futuri
+
+I file JSONL in `logs/` raccolgono snapshot con decisione annotata per ogni mano. Questo dataset è pensato come punto di partenza per:
+
+- Addestrare un modello ML per strategie postflop
+- Analisi statistica delle proprie sessioni
+- Backtesting di strategie alternative

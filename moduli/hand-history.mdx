@@ -1,0 +1,107 @@
+---
+title: "hand_history.py — Tracciamento Mano"
+description: "HandHistoryTracker: rilevamento nuova mano, inferenza BB, identificazione del raiser."
+icon: "clock-rotate-left"
+---
+
+## Responsabilità
+
+`app/engine/hand_history.py` traccia la **storia preflop** di una singola mano analizzando le differenze tra snapshot consecutivi. Fornisce al `PreflopDecisionEngine` le informazioni necessarie per scegliere la tabella strategica corretta.
+
+**Livello**: Applicazione  
+**Pattern**: Stateful tracker, aggiornato per snapshot; queried via interfaccia read-only
+
+---
+
+## `HandHistoryTracker`
+
+### Stato Interno
+
+| Attributo | Descrizione |
+|---|---|
+| `_prev_bets` | Bet precedenti per diff del trigger raise |
+| `_last_hand_id` | hand_id dell'ultimo snapshot processato |
+| `_raiser_seat` | Seat del primo raiser (`None` = RFI scenario) |
+| `_raiser_pos` | Posizione relativa del raiser |
+| `_raised_amount` | Importo del raise |
+| `_hand_active` | Mano attualmente in corso |
+| `_calibrated` | Primo snapshot Preflop pulito ricevuto |
+| `_n_players_start` | Numero giocatori all'inizio della mano |
+| `_hand_compromised` | Stato "Unknown" rilevato in questa mano |
+| `_bb_amount` | Importo dedotto del big blind |
+| `_posted_blinds` | Flag: blinds già rilevati in questa mano |
+| `_error_callback` | Callback opzionale per errori di stato |
+
+---
+
+## `update(snapshot)` — Logica di Aggiornamento
+
+### Step 1: Rilevamento Nuova Mano
+
+```python
+if snapshot["hand_id"] != self._last_hand_id:
+    # Reset completo di tutti gli attributi per-mano
+    self._raiser_seat = None
+    self._raiser_pos = None
+    self._raised_amount = None
+    self._hand_active = True
+    self._hand_compromised = False
+    self._bb_amount = None
+    self._posted_blinds = False
+    self._n_players_start = len(snapshot["active_players"])
+    self._last_hand_id = snapshot["hand_id"]
+```
+
+Al primo snapshot assoluto: se il `game_state == "Preflop"` e non ci sono carte board → `_calibrated = True`.
+
+### Step 2: Rilevamento Stato Compromesso
+
+```python
+if snapshot["game_state"] == "Unknown":
+    self._hand_compromised = True
+    if self._error_callback:
+        self._error_callback("Lettura anomala rilevata")
+```
+
+### Step 3: Inferenza BB (Fase 1)
+
+Precondizioni: almeno 2 bet, blinds non ancora rilevati.
+
+```python
+bets_sorted = sorted(bets.values())
+sb, bb = bets_sorted[0], bets_sorted[1]
+
+if 0.40 <= sb / bb <= 0.65:     # rapporto SB/BB plausibile
+    self._bb_amount = bb
+    self._posted_blinds = True
+```
+
+Il rapporto atteso per SB/BB è 0.50. La finestra 0.40–0.65 tollera piccole variazioni OCR.
+
+### Step 4: Rilevamento Raise (Fase 2)
+
+Precondizioni: BB rilevato, raiser non ancora identificato.
+
+```python
+for seat, amount in current_bets.items():
+    prev_amount = self._prev_bets.get(seat, 0.0)
+    if amount > self._bb_amount and amount > prev_amount:
+        self._raiser_seat = seat
+        self._raiser_pos = snapshot["player_bets_positions"][seat]
+        self._raised_amount = amount
+        break
+```
+
+Viene registrato solo il **primo raise** — assunzione: una soluzione RFI o VS_RAISE (no 3-bet).
+
+---
+
+## Interfaccia Query (usata da `PreflopDecisionEngine`)
+
+| Metodo | Ritorna | Descrizione |
+|---|---|---|
+| `is_rfi() → bool` | `_raiser_seat is None` | Nessun raise → scenario RFI |
+| `raiser_position() → str \| None` | `_raiser_pos` | Posizione del raiser |
+| `is_calibrated() → bool` | `_calibrated` | Primo Preflop pulito ricevuto |
+| `n_players_at_start() → int` | `_n_players_start` | Giocatori a inizio mano |
+| `is_hand_compromised() → bool` | `_hand_compromised` | Lettura anomala in questa mano |

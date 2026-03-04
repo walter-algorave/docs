@@ -1,0 +1,123 @@
+---
+title: "preflop_tables.py — Tabelle GTO e Posizioni"
+description: "Tabelle RFI e VS_RAISE di Corropoli, seat_to_position, normalize_position e hand_key."
+icon: "table-list"
+---
+
+## Responsabilità
+
+`app/engine/preflop_tables.py` contiene le **tabelle strategiche GTO** e le funzioni di calcolo posizione. È la knowledge base del DSS — pura data + funzioni pure, nessuno stato.
+
+**Livello**: Applicazione (dati e logica strategica)
+
+---
+
+## Tabelle Strategiche
+
+Le tabelle sono basate sulla strategia GTO di **Stefano Corropoli** per Texas Hold'em 6-max.
+
+### `RFI_TABLES` — Raise First In
+
+Contiene un entry per ogni posizione che può aprire per prima: EP, MP, CO, BU, SB. Nessun entry per BB (check gratuito).
+
+```python
+RFI_TABLES = {
+    "EP": {"raise": ["AA", "KK", "QQ", ...], "call": []},
+    "MP": {"raise": ["AA", "KK", ..., "AJs", ...], "call": []},
+    "CO": {...},
+    "BU": {...},
+    "SB": {...}
+}
+```
+
+Ogni entry ha una lista `"raise"` con le mani da aprire e una lista `"call"` (vuota in questa strategia — nessun limp).
+
+### `VS_RAISE_TABLES` — Contro un Raise
+
+Contiene un entry per ogni posizione di apertura avversaria: VS_EP, VS_MP, VS_CO, VS_BU, VS_SB. Nessun entry VS_BB.
+
+```python
+VS_RAISE_TABLES = {
+    "VS_EP": {"raise": [...], "call": [...]},
+    "VS_MP": {...},
+    "VS_CO": {...},
+    "VS_BU": {...},
+    "VS_SB": {...}
+}
+```
+
+---
+
+## `hand_key(card1, card2) → str`
+
+Produce la notazione standard per una coppia di carte.
+
+```python
+hand_key(Card("A", Hearts), Card("K", Diamonds))  → "AKo"  (offsuit)
+hand_key(Card("A", Hearts), Card("K", Hearts))    → "AKs"  (suited)
+hand_key(Card("A", Hearts), Card("A", Diamonds))  → "AA"   (pocket pair)
+hand_key(Card("T", Clubs), Card("9", Clubs))      → "T9s"
+
+# Ordine: rango più alto sempre prima
+hand_key(Card("2", Hearts), Card("A", Clubs))     → "A2o"
+```
+
+Il rango più alto è determinato con l'ordine `["A","K","Q","J","T","9","8","7","6","5","4","3","2"]`. Restituisce `""` se uno dei ranghi è `"X"` (lettura invalida).
+
+---
+
+## `lookup(table, key) → str`
+
+```python
+if key in table["raise"]: return "raise"
+if key in table["call"]:  return "call"
+return "fold"             # default se non presente
+```
+
+---
+
+## `seat_to_position(seat, dealer, active_players) → str`
+
+Calcola la posizione relativa dell'hero dato il seat dealer e i giocatori attivi.
+
+```python
+_POS_MAP = {0: "BU", 1: "SB", 2: "BB", 3: "EP", 4: "MP", 5: "CO"}
+
+# Costruisce lista ordinata in senso orario da dealer
+ordered = [(dealer + i) % 6 for i in range(6)]
+ordered = [s for s in ordered if s in active_players]
+
+# Mappa la posizione in base all'indice nella lista
+pos_index = ordered.index(seat)
+return _POS_MAP[pos_index]
+```
+
+### Esempi
+
+| Dealer | Hero Seat | Attivi | Posizione Hero |
+|---|---|---|---|
+| 0 | 0 | tutti | BU |
+| 1 | 0 | tutti | CO |
+| 2 | 0 | tutti | MP |
+| 5 | 0 | tutti | SB |
+| 4 | 0 | [0,4] | BB (heads-up) |
+
+---
+
+## `normalize_position(position, n_active) → str`
+
+Adatta le posizioni a tavoli short-handed. Con meno di 6 giocatori, le posizioni EP e MP "collassano" verso CO.
+
+```python
+_POSITIONS = ["EP", "MP", "CO", "BU", "SB", "BB"]
+# Con 4 giocatori attivi, esistono solo: CO, BU, SB, BB
+# "EP" e "MP" collassano a "CO"
+```
+
+| `n_active` | Posizioni valide |
+|---|---|
+| 6 | EP, MP, CO, BU, SB, BB |
+| 5 | MP, CO, BU, SB, BB |
+| 4 | CO, BU, SB, BB |
+| 3 | BU, SB, BB |
+| 2 | SB, BB |

@@ -1,0 +1,109 @@
+---
+title: "Workflow di Calibrazione"
+description: "Guida passo-passo per calibrare le coordinate ROI usando la finestra interattiva."
+icon: "wand-magic-sparkles"
+---
+
+## Prima di Iniziare
+
+<Warning>
+Assicurati che PokerTH sia aperto e che ci sia un tavolo attivo con carte visibili prima di aprire la finestra di calibrazione. Il sistema cattura un fotogramma live al momento dell'apertura.
+</Warning>
+
+## Calibrazione di un Parametro
+
+<Steps>
+  <Step title="Apri la Finestra di Calibrazione">
+    Clicca il pulsante **Calibrazione** nella sidebar sinistra della finestra principale.
+
+    La finestra si apre con il fotogramma live di PokerTH. Se nessuna finestra PokerTH è trovata, viene mostrata una schermata vuota — chiudi, avvia PokerTH e riprova.
+  </Step>
+
+  <Step title="Seleziona il Parametro da Calibrare">
+    Usa il **dropdown** in alto nel pannello di controllo per scegliere il parametro.
+
+    I parametri sono organizzati per categoria:
+    - `Carta Hero 1`, `Carta Hero 2`
+    - `Board 1` – `Board 5`
+    - `Button Seat 0` – `Button Seat 5`
+    - `Bet Seat 0` – `Bet Seat 5`
+    - `Player Seat 0` – `Player Seat 5`
+    - `Pot`
+
+    Selezionando un parametro, il canvas evidenzia la ROI corrente con un rettangolo colorato.
+  </Step>
+
+  <Step title="Naviga nell'Immagine">
+    Usa le seguenti gesture per trovare l'area da calibrare:
+
+    | Gesture | Azione |
+    |---|---|
+    | Scroll mousewheel su/giù | Zoom in/out (centrato sul cursore) |
+    | Drag trasto destro | Pan (sposta viewport) |
+
+    <Tip>
+    Per le carte, fai zoom fino a 4–6× per posizionare la ROI con precisione sul singolo pixel.
+    </Tip>
+  </Step>
+
+  <Step title="Disegna la Nuova ROI">
+    **Tieni premuto il tasto sinistro** sull'angolo superiore sinistro della ROI → **trascina** fino all'angolo inferiore destro → **rilascia**.
+
+    Il rettangolo viene disegnato in tempo reale mentre trascini. Al rilascio:
+    - I campi X1/Y1/X2/Y2 nel pannello si aggiornano
+    - Per parametri `[x, y, w, h]`, vengono calcolati automaticamente da X1/Y1/X2/Y2
+    - Il thread di feedback si avvia
+  </Step>
+
+  <Step title="Interpreta il Feedback">
+    Dopo circa 0.5–1 secondo, il campo **Feedback** nel pannello mostra il risultato della lettura CV sulla ROI appena disegnata:
+
+    | Tipo parametro | Feedback atteso |
+    |---|---|
+    | Carta | `"Rango: A, Seme: ♥ (Hearts)"` |
+    | Dealer Button | `"Bianco: 72.3% — Dealer trovato ✓"` |
+    | Bet / Pot | `"OCR: 2.50"` |
+    | Player | `"Card-back rilevato ✓ (45 pixel)"` |
+
+    <Note>
+    Se il feedback mostra `"X"` per la carta o `"0"` per il bet, la ROI non è posizionata correttamente. Ridisegna.
+    </Note>
+  </Step>
+
+  <Step title="Salva il Parametro">
+    Clicca **Salva** per scrivere le nuove coordinate in `settings.py`.
+
+    Oppure clicca **Salva Tutto** dopo aver regolato tutti i parametri necessari per salvare tutto in una volta.
+
+    <Tip>
+    Puoi usare **Ripristina** per annullare le modifiche non salvate e tornare ai valori della sessione corrente.
+    </Tip>
+  </Step>
+</Steps>
+
+## Calibrazione di Tutte le Carte
+
+Per calibrare le **6 carte hero + board** in modo efficiente:
+
+1. Apri la calibrazione durante il flop (così sono visibili 3+2 carte)
+2. Seleziona `Carta Hero 1` → zoom sull'area hero → disegna → controlla feedback → Salva
+3. Ripeti per `Carta Hero 2`, `Board 1`, `Board 2`, `Board 3`
+4. Per Turn e River: sono visibili solo durante quella fase; calibra quando escono
+5. Clicca **Salva Tutto** alla fine
+
+## Suggerimenti Pratici
+
+<AccordionGroup>
+  <Accordion title="Le carte mostrano rango sbagliato" icon="circle-question">
+    La ROI potrebbe essere spostata di qualche pixel. Il rango è nell'angolo superiore sinistro della carta (21×27 px totali). Assicurati che la ROI inizi esattamente sul bordo superiore sinistro del simbolo del rango.
+  </Accordion>
+  <Accordion title="Il feedback bet mostra 0 anche con scommesse visibili" icon="circle-question">
+    La ROI potrebbe includere aree non testuali. Assicurati che la ROI contenga solo il numero della scommessa, non il chip grafico o il nome del giocatore.
+  </Accordion>
+  <Accordion title="Il dealer non viene mai rilevato" icon="circle-question">
+    Il chip dealer in PokerTH è un oggetto bianco rotondo. Ingrandisci la ROI così da includerlo completamente, ma non così grande da includere aree bianche dello sfondo che potrebbero dare falsi positivi.
+  </Accordion>
+  <Accordion title="Come verificare che tutte le ROI siano corrette?" icon="circle-question">
+    Avvia l'analisi normalmente e osserva il log per qualche mano. Se tutte le colonne (carte, bet, pot, posizione) si aggiornano correttamente, la calibrazione è buona.
+  </Accordion>
+</AccordionGroup>

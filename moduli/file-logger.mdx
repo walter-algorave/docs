@@ -1,0 +1,87 @@
+---
+title: "file_logger.py — Persistenza JSONL"
+description: "FileLogger: scrittura thread-safe degli snapshot arricchiti in file JSONL per sessione."
+icon: "file-lines"
+---
+
+## Responsabilità
+
+`app/engine/file_logger.py` persiste ogni snapshot arricchito (stato + decisione) come riga JSON in un file `.jsonl`. Serve come subscriber secondario del pattern Observer e come dataset per analisi future.
+
+**Livello**: Applicazione  
+**Pattern**: Observer Subscriber, thread-safe writer
+
+---
+
+## `FileLogger`
+
+### Inizializzazione
+
+```python
+logger = FileLogger()
+# Crea: logs/2026-03-04_10-25-30.jsonl
+```
+
+Il file viene creato con il timestamp della sessione (`YYYY-MM-DD_HH-MM-SS.jsonl`) nella directory `logs/`. Un file per sessione di analisi.
+
+### `log(enriched_snapshot: dict)`
+
+Scrive una riga JSON nel file, thread-safe.
+
+```python
+def log(self, enriched_snapshot: dict):
+    with self._lock:
+        self._file.write(json.dumps(enriched_snapshot, default=str) + "\n")
+        self._file.flush()
+```
+
+- `threading.Lock` protegge da write concorrenti (N tavoli → N chiamate simultanee)
+- `default=str` serializza oggetti non-JSON (`Card`, `Colors`, `datetime`) come stringa
+- `flush()` immediato garantisce che ogni riga sia su disco prima del ciclo successivo
+- `OSError` viene silenziosamente ignorata per non interrompere l'analisi
+
+### `log_path` (property)
+
+```python
+@property
+def log_path(self) -> str:
+    return self._filepath
+```
+
+---
+
+## Formato Riga JSONL
+
+Ogni riga contiene un JSON object completo:
+
+```json
+{
+  "table_name": "Tavolo-1",
+  "game_state": "Preflop",
+  "player_cards": ["HA", "DK"],
+  "table_cards": [],
+  "dealer_position": 3,
+  "relative_position": "CO",
+  "active_players": [0, 1, 2, 3, 4, 5],
+  "initial_active_players": 6,
+  "hero_folded": false,
+  "hero_had_cards": true,
+  "hand_id": 7,
+  "player_bets": {"0": 0, "1": 0.5, "2": 1.0},
+  "pot_amount": 1.5,
+  "ts": "2026-03-04 10:27:15.332",
+  "decision": "RAISE"
+}
+```
+
+---
+
+## Utilizzo Futuro
+
+I file JSONL in `logs/` sono pensati come **dataset** per:
+
+- Analisi statistica delle sessioni di gioco
+- Addestramento di modelli ML per strategie postflop (menzionato nella tesi come sviluppo futuro)
+- Debug e replay di mani specifiche
+
+Ogni file copre una sessione completa (`start_analysis()` → `stop_analysis()`).

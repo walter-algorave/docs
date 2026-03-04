@@ -1,0 +1,172 @@
+---
+title: "State Machine e Ciclo di Vita di una Mano"
+description: "La FSM Preflop/Flop/Turn/River, il contatore hand_id, il debouncing e la logica di reset mano."
+icon: "rotate"
+---
+
+## La Macchina a Stati del Gioco
+
+`GameSession` implementa una **Finite State Machine** (FSM) che mappa lo stato del tavolo in un enum con 5 valori:
+
+```
+"Preflop"  ←  len(table_cards) == 0
+"Flop"     ←  len(table_cards) == 3
+"Turn"     ←  len(table_cards) == 4
+"River"    ←  len(table_cards) == 5
+"Unknown"  ←  qualsiasi altro numero (frame di animazione, lettura corrotta)
+```
+
+La transizione avviene nella funzione `check_game_state()`:
+
+```python
+def check_game_state(self) -> str:
+    n = len(self.table_cards)
+    if n == 0:   return "Preflop"
+    if n == 3:   return "Flop"
+    if n == 4:   return "Turn"
+    if n == 5:   return "River"
+    return "Unknown"
+```
+
+<Note>
+`"Unknown"` non è solo un errore — segnala a `HandHistoryTracker` che la lettura è compromessa. Il tracker imposta `_hand_compromised = True` e il DSS risponde con `Decision.COMPROMISED`.
+</Note>
+
+---
+
+## Il Contatore `hand_id`
+
+### Problema: come rilevare una nuova mano?
+
+Preflop → Flop → Turn → River → **Preflop** (nuova mano). Se il `game_state` torna a `"Preflop"`, potrebbe essere:
+1. Inizio di una nuova mano (devo resettare `HandHistoryTracker`)
+2. Stesso Preflop, fotogramma aggiornato (NON devo resettare)
+
+Un semplice diff di `game_state` non distingue caso 1 da caso 2. Serve un **contatore monotono** che si incrementa solo quando c'è davvero una nuova mano.
+
+### Soluzione: `hand_id` + logica di reset mano
+
+```python
+# In GameSession.update() — logica di reset
+is_preflop = self.game_state == "Preflop"
+no_board_cards = len(self.table_cards) == 0
+pot_reset = self.pot_amount < POT_RESET_THRESHOLD          # < 5.0
+hand_was_played = self._max_pot_seen >= POT_RESET_THRESHOLD
+
+enough_players = len(self.active_players) >= 2
+
+if (is_preflop and no_board_cards and pot_reset
+        and hand_was_played and enough_players
+        and not (self.hero_had_cards and self.hero_folded)):
+    self.hand_id += 1
+    self._max_pot_seen = 0.0
+```
+
+### Guardie del reset
+
+| Guardia | Motivo |
+|---|---|
+| `game_state == "Preflop"` e `len(table_cards) == 0` | Siamo davvero a inizio mano |
+| `pot < POT_RESET_THRESHOLD (5.0)` | Il pot è stato svuotato — mano conclusa |
+| `_max_pot_seen >= 5.0` | Almeno una mano completa è stata giocata — evita false transizioni al cold start |
+| `len(active_players) >= 2` | Il tavolo è attivo, non sta per chiudersi |
+| `not (hero_had_cards and hero_folded)` | L'hero ha folded ma gli altri stanno ancora giocando — la mano è ancora in corso |
+
+`HandHistoryTracker` riceve il `hand_id` nello snapshot e resetta tutto il proprio stato interno quando vede un `hand_id` diverso da quello precedente.
+
+---
+
+## Debouncing: `MAX_INVALID_READS`
+
+Durante le **animazioni** (distribuzione carte, flip board), i frame intermedi producono letture CV non valide. Senza debouncing, il sistema farebbe transizioni di stato false ogni ~33ms.
+
+### Per le carte del board
+
+```python
+# CardReader.read_table_cards()
+if not plausibility_check(n_cards):   # solo 0/3/4/5 carte accettate
+    self._invalid_board_count += 1
+    if self._invalid_board_count < MAX_INVALID_READS:  # default: 3
+        return self._last_table_cards   # mantieni ultimo stato valido
+    return []
+self._invalid_board_count = 0
+self._last_table_cards = cards
+return cards
+```
+
+### Per le carte dell'hero
+
+```python
+# CardReader.read_player_cards()
+if self._is_player_cards_hidden(card1, card2):
+    self._invalid_read_count += 1
+    if self._invalid_read_count < MAX_INVALID_READS:
+        return self._last_valid_player_cards  # freeze
+    return []   # dopo 3 read invalide: fold accettato
+# face-up valido:
+self._invalid_read_count = 0
+self._last_valid_player_cards = cards
+return cards
+```
+
+Il debouncing da `3 frame invalidi` dura circa **3 secondi** al tasso di polling da 1 Hz — sufficiente per attraversare l'animazione senza falsi fold.
+
+---
+
+## `StateTracker`: Notifica Solo sui Cambiamenti
+
+`StateTracker.check()` confronta ogni campo del `GameSession` con il valore precedente. Solo se **almeno un campo è cambiato**, costruisce uno snapshot immutabile e notifica i listener:
+
+```python
+def check(self, session: GameSession) -> bool:
+    changed = (
+        session.game_state         != self._prev.game_state
+        or session.player_cards    != self._prev.player_cards
+        or session.table_cards     != self._prev.table_cards
+        or session.dealer_position != self._prev.dealer_position
+        or session.relative_position != self._prev.relative_position
+        or session.active_players  != self._prev.active_players
+        or session.hero_folded     != self._prev.hero_folded
+        or session.hand_id         != self._prev.hand_id
+        or abs(session.pot_amount - self._prev.pot_amount) > 0.01   # float tolerance
+        or session.player_bets     != self._prev.player_bets
+    )
+    if changed:
+        self._sync(session)
+        for listener in self._listeners:
+            listener.on_state_changed(self._snapshot())
+    return changed
+```
+
+La soglia `> 0.01` per il pot evita notifiche spurie da micro-variazioni OCR (es. "12.0" vs "12.00").
+
+---
+
+## Ciclo di Vita Completo di una Mano
+
+```
+Nuovo tavolo rilevato
+  → GameSession creata (hand_id = 0)
+  → HandHistoryTracker creato (_calibrated = False)
+
+Primo snapshot Preflop pulito (0 carte board)
+  → HandHistoryTracker._calibrated = True
+  → DSS può iniziare a valutare
+
+[PREFLOP]
+  → BB rilevato (2 bet: rapporto SB/BB ≈ 0.50)
+  → raiser rilevato (primo bet > BB che cresce)
+  → DSS.evaluate() → RAISE / CALL / FOLD_CHECK
+
+[FLOP / TURN / RIVER]
+  → DSS.evaluate() → WAIT (non preflop)
+
+[Fine mano]
+  → pot scende sotto 5.0
+  → hand_id++
+  → HandHistoryTracker.update() → reset completo
+
+[Hero fold a metà mano]
+  → hero_folded = True ma hand_id NON cambia
+  → is_hero_folded() = True → DSS bypassato → Decision.FOLDED
+```

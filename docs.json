@@ -1,122 +1,120 @@
 {
   "$schema": "https://mintlify.com/docs.json",
   "theme": "mint",
-  "name": "Mint Starter Kit",
+  "name": "PokerTH Companion",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#1E3A8A",
+    "light": "#3B82F6",
+    "dark": "#1E40AF"
   },
   "favicon": "/favicon.svg",
+  "logo": {
+    "light": "/favicon.svg",
+    "dark": "/favicon.svg"
+  },
+  "navbar": {
+    "links": [
+      {
+        "label": "GitHub",
+        "href": "https://github.com/walter-algorave/PokerTHComp"
+      }
+    ]
+  },
   "navigation": {
     "tabs": [
       {
-        "tab": "Guides",
+        "tab": "Il Progetto",
         "groups": [
           {
-            "group": "Getting started",
-            "pages": [
-              "index",
-              "quickstart",
-              "development"
-            ]
+            "group": "Panoramica",
+            "pages": ["index", "installazione", "architettura"]
           },
           {
-            "group": "Customization",
+            "group": "Concetti Fondamentali",
             "pages": [
-              "essentials/settings",
-              "essentials/navigation"
-            ]
-          },
-          {
-            "group": "Writing content",
-            "pages": [
-              "essentials/markdown",
-              "essentials/code",
-              "essentials/images",
-              "essentials/reusable-snippets"
-            ]
-          },
-          {
-            "group": "AI tools",
-            "pages": [
-              "ai-tools/cursor",
-              "ai-tools/claude-code",
-              "ai-tools/windsurf"
+              "concetti/computer-vision",
+              "concetti/state-machine",
+              "concetti/pattern-osservatore"
             ]
           }
         ]
       },
       {
-        "tab": "API reference",
+        "tab": "Moduli",
         "groups": [
           {
-            "group": "API documentation",
+            "group": "Dati e Configurazione",
+            "pages": ["moduli/models", "moduli/settings"]
+          },
+          {
+            "group": "Infrastruttura",
+            "pages": ["moduli/screen-capture"]
+          },
+          {
+            "group": "Vision (Dominio)",
             "pages": [
-              "api-reference/introduction"
+              "moduli/image-utils",
+              "moduli/card-reader",
+              "moduli/table-reader"
             ]
           },
           {
-            "group": "Endpoint examples",
+            "group": "Engine (Applicazione)",
             "pages": [
-              "api-reference/endpoint/get",
-              "api-reference/endpoint/create",
-              "api-reference/endpoint/delete",
-              "api-reference/endpoint/webhook"
+              "moduli/session",
+              "moduli/hand-history",
+              "moduli/decision-engine",
+              "moduli/preflop-tables",
+              "moduli/file-logger"
+            ]
+          },
+          {
+            "group": "Presentazione",
+            "pages": [
+              "moduli/gui",
+              "moduli/gui-views",
+              "moduli/calibration",
+              "moduli/calibration-params"
             ]
           }
         ]
-      }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
-  },
-  "navbar": {
-    "links": [
+      },
       {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
+        "tab": "Calibrazione",
+        "groups": [
+          {
+            "group": "Guida alla Calibrazione",
+            "pages": [
+              "calibrazione/panoramica",
+              "calibrazione/parametri",
+              "calibrazione/workflow"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "DSS Preflop",
+        "groups": [
+          {
+            "group": "Sistema Decisionale",
+            "pages": [
+              "dss/panoramica",
+              "dss/posizioni",
+              "dss/strategia",
+              "dss/hand-history"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Testing",
+        "groups": [
+          {
+            "group": "Suite di Test",
+            "pages": ["testing/panoramica", "testing/esecuzione"]
+          }
+        ]
       }
-    ],
-    "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://dashboard.mintlify.com"
-    }
-  },
-  "contextual": {
-    "options": [
-     "copy",
-     "view",
-     "chatgpt",
-     "claude",
-     "perplexity",
-     "mcp",
-     "cursor",
-     "vscode"
-   ]
-  },
-  "footer": {
-    "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
-    }
+    ]
   }
 }

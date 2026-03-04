@@ -1,0 +1,90 @@
+---
+title: "screen_capture.py — Cattura Win32"
+description: "Cattura passiva in background di finestre PokerTH con PrintWindow e gestione multi-tavolo."
+icon: "camera"
+---
+
+## Responsabilità
+
+`app/capture/screen_capture.py` è il **livello infrastrutturale** della pipeline CV. Trova tutte le finestre PokerTH aperte, le ridimensiona e cattura fotogrammi in background usando Win32 GDI.
+
+**Livello**: Infrastruttura  
+**Dipendenze**: `win32gui`, `win32ui`, `win32con`, `ctypes`, `PIL`
+
+---
+
+## `SetProcessDPIAware`
+
+```python
+ctypes.windll.user32.SetProcessDPIAware()
+```
+
+Chiamata a livello di **modulo** (import time). Disabilita la virtualizzazione DPI di Windows — essenziale su monitor HiDPI per garantire che le coordinate calibrate corrispondano ai pixel reali catturati.
+
+---
+
+## `ScreenCapture`
+
+### Stato Interno
+
+| Attributo | Tipo | Descrizione |
+|---|---|---|
+| `_hwnd_names` | `dict[int, str]` | Mappa persistente `hwnd → "Tavolo-N"` |
+| `_table_counter` | `int` | Contatore monotono per nomi tavoli unici |
+| `_resized_hwnds` | `set[int]` | Hwnd già ridimensionati (resize una sola volta) |
+
+### `find_windows() → list[int]`
+
+Trova tutte le finestre PokerTH visibili.
+
+```python
+# Logica di filtering
+- Titolo contiene "PokerTH"
+- NON contiene: "PokerTH-Api", "Visual Studio Code", ... (lista esclusioni)
+- NON appartiene al PID corrente
+- Dimensioni ≥ 100×100 px
+```
+
+Per ogni hwnd trovato per la prima volta: `MoveWindow(hwnd, 0, 0, 1280, 720)` — ridimensiona a risoluzione di calibrazione. Il ridimensionamento avviene **una sola volta** per hwnd (tracciato in `_resized_hwnds`).
+
+### `grab(hwnds) → list[Screenshot]`
+
+Cattura un fotogramma per ogni hwnd nella lista.
+
+```python
+# Pipeline per ogni hwnd
+hwnd_dc  = win32gui.GetWindowDC(hwnd)
+mem_dc   = win32ui.CreateCompatibleDC(hwnd_dc)
+bitmap   = win32ui.CreateBitmap()
+bitmap.CreateCompatibleBitmap(hwnd_dc, 1280, 720)
+mem_dc.SelectObject(bitmap)
+
+win32gui.PrintWindow(hwnd, mem_dc.GetSafeHdc(), 0)
+# PrintWindow: la finestra si ridisegna nel DC virtuale
+# → funziona con finestre minimizzate o in background
+
+bmpinfo = bitmap.GetInfo()
+bmpstr  = bitmap.GetBitmapBits(True)
+img = Image.frombuffer('RGB', (1280, 720), bmpstr, 'raw', 'BGRX')
+
+# Salva su file temporaneo
+fname = tempfile.mktemp(suffix='.png')
+img.save(fname)
+return Screenshot(table_name, fname)
+```
+
+### `active_table_names(hwnds) → set[str]`
+
+Mappa una lista di hwnd ai nomi tavolo corrispondenti (`_hwnd_names`). Usato da `AnalysisEngine` per rilevare tavoli chiusi.
+
+---
+
+## Perché `PrintWindow` e non `mss`?
+
+| Tecnica | Funziona in background | Note |
+|---|---|---|
+| `PIL.ImageGrab` | No | Richiede finestra in primo piano |
+| `mss` | No | Screen crop dal compositor — finestra deve essere visibile |
+| `PrintWindow` (Win32) | **Sì** | Invia `WM_PRINT` alla finestra — si ridisegna nel DC virtuale |
+
+`PrintWindow` è l'unica tecnica che permette la cattura **passiva** senza togliere focus a PokerTH o richiedere che la finestra sia visibile sullo schermo.

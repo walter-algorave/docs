@@ -1,0 +1,113 @@
+---
+title: "table_reader.py — Metadati Tavolo"
+description: "TableReader: dealer button, giocatori attivi, bet e pot con hash-caching MD5."
+icon: "table"
+---
+
+## Responsabilità
+
+`app/vision/table_reader.py` legge i **metadati del tavolo** da un fotogramma: posizione dealer, giocatori attivi, bet per seat e piatto. Usa hash-caching MD5 per bet e pot per evitare OCR inutili.
+
+**Livello**: Dominio  
+**Dipendenze**: `image_utils.py`, `settings.py`
+
+---
+
+## `TableReader`
+
+### Stato Interno (per istanza)
+
+| Attributo | Descrizione |
+|---|---|
+| `_last_bets_hash` | MD5 della concatenazione delle 6 ROI bet |
+| `_last_bets` | Ultimo risultato bet valido |
+| `_last_pot_hash` | MD5 della ROI pot |
+| `_last_pot` | Ultimo importo pot valido |
+
+---
+
+## `find_dealer(image) → int`
+
+Trova la posizione del dealer button tra i 6 seat disponibili.
+
+```python
+best_seat = -1
+best_pct  = 0.0
+
+for i, (x, y, w, h) in enumerate(BUTTON_POSITIONS):
+    roi = image[y:y+h, x:x+w]
+    result = analyze_dealer_roi(roi)   # {"found": bool, "white_pct": float}
+    if result["white_pct"] > DEALER_WHITE_MIN_PCT and result["white_pct"] > best_pct:
+        best_pct  = result["white_pct"]
+        best_seat = i
+
+return best_seat   # -1 se nessun seat supera la soglia
+```
+
+La logica **best-match** (invece di first-match) evita falsi positivi da oggetti bianchi casuali sul tavolo.
+
+---
+
+## `get_active_players(image) → list[int]`
+
+Rileva quali seat hanno un giocatore attivo.
+
+```python
+for seat_idx, (x, y, w, h) in enumerate(PLAYER_POSITIONS):
+    roi = image[y:y+h, x:x+w]
+    if seat_idx == 0:   # Hero
+        result = analyze_hero_roi(roi)     # pixel bianchi = carte face-up
+    else:               # Avversari
+        result = analyze_player_roi(roi)   # card-back HSV = carte in mano
+
+    if result["active"]:
+        active.append(seat_idx)
+```
+
+Restituisce una lista di indici (es. `[0, 1, 3, 5]`).
+
+---
+
+## `read_bets(image) → dict[int, float]`
+
+Legge l'importo della scommessa per ogni seat tramite OCR.
+
+```
+1. Concatena tutte le 6 ROI bet → MD5
+2. Se hash invariato → return _last_bets
+3. Per ogni seat (x, y, w, h):
+   ├─ Count pixel luminosi nella ROI
+   ├─ Se < 50 pixel luminosi → skip (nessuna bet visibile)
+   └─ preprocess_number_roi(roi_gray)
+      → pytesseract.image_to_string(config=OCR_NUMBER_CONFIG)
+      → parse float
+      → se > 0: bets[seat_idx] = float_val
+4. Cache + return bets
+```
+
+La soglia di 50 pixel luminosi pre-OCR evita chiamate Tesseract costose su ROI vuote.
+
+---
+
+## `get_pot(image) → float`
+
+Legge il valore del piatto.
+
+```
+1. ROI = image[y:y+h, x:x+w]  (POT_AREA)
+2. MD5 → se invariato → return _last_pot
+3. preprocess_number_roi → Tesseract → parse float
+4. Cache + return
+```
+
+---
+
+## `get_player_seat() → int` (statico)
+
+Restituisce sempre `0` — l'hero è sempre il seat 0 nella configurazione attuale.
+
+---
+
+## `get_relative_position(dealer_pos, player_pos, active_players) → str` (statico)
+
+Delega a `preflop_tables.seat_to_position()`. Restituisce la posizione relativa dell'hero (`"EP"`, `"MP"`, `"CO"`, `"BU"`, `"SB"`, `"BB"`, `"Unknown"`).

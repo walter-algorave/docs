@@ -1,0 +1,114 @@
+---
+title: "calibration.py — Finestra di Calibrazione"
+description: "CalibrationWindow: strumento interattivo drag-to-draw per calibrare le coordinate ROI con feedback CV live."
+icon: "crosshairs"
+---
+
+## Responsabilità
+
+`app/calibration.py` implementa la **finestra di calibrazione interattiva** che permette all'utente di ridefinire graficamente le coordinate ROI di tutti i 27 parametri, con feedback live (OCR, rilevamento colori, template match).
+
+**Livello**: Presentazione  
+**Dipendenze**: `calibration_params.py`, `image_utils.py`, `PIL`, `customtkinter`
+
+---
+
+## Layout della Finestra
+
+```
+┌──────────────────────┬──────────────────────────────────────┐
+│  PANNELLO CONTROLLO  │  CANVAS IMMAGINE                     │
+│  (330px fissi)       │  (espandibile)                       │
+│                      │                                      │
+│  [Dropdown param]    │  [Immagine PokerTH con overlay ROI]  │
+│                      │                                      │
+│  X1: [___] Y1: [___] │  ← zoom con scroll                  │
+│  X2: [___] Y2: [___] │  ← pan con drag destro              │
+│                      │  ← disegna ROI con drag sinistro     │
+│  Dimensioni carta:   │                                      │
+│  21 × 27 px          │                                      │
+│                      │                                      │
+│  [Template ranks]    │                                      │
+│  (solo per carte)    │                                      │
+│                      │                                      │
+│  Feedback:           │                                      │
+│  "Rango: A, Seme: ♥" │                                      │
+│                      │                                      │
+│  [Salva] [Ripristina]│                                      │
+│  [Salva Tutto]       │                                      │
+└──────────────────────┴──────────────────────────────────────┘
+```
+
+---
+
+## Funzionalità Canvas
+
+### Zoom
+
+- **Scroll mousewheel** → zoom centrato sul cursore
+- Range: 0.3× – 8.0× (step ZOOM_STEP = 1.15)
+
+### Pan
+
+- **Drag tasto destro** → sposta la viewport
+
+### Disegno ROI
+
+- **Drag tasto sinistro** → disegna rettangolo ROI
+- Al rilascio: aggiorna i campi X1/Y1/X2/Y2 nel pannello di controllo
+- Avvia il thread feedback asincrono
+
+---
+
+## Overlay ROI
+
+Il canvas mostra **rettangoli colorati** per tutti i parametri attivi:
+
+| Categoria | Colore Overlay |
+|---|---|
+| Carte (Hero + Board) | `#00FF88` (verde acqua) |
+| Dealer Button | `#FF6600` (arancione) |
+| Bet | `#FFDD00` (giallo) |
+| Player | `#CC44FF` (viola) |
+| Pot | `#FF4466` (rosso-rosa) |
+
+Il parametro **selezionato** è disegnato più spesso. Gli altri parametri della **stessa categoria** sono mostrati come rettangoli secondari (`extra_rects`) più sottili — permettono di vedere tutti i 6 seat mentre si calibra uno solo.
+
+---
+
+## Feedback Asincrono
+
+Al termine del disegno ROI, parte un thread separato che esegue la funzione `read_fn` del parametro selezionato sull'immagine ROI appena definita:
+
+```python
+def _start_read_thread(self):
+    t = threading.Thread(target=self._read_in_bg, daemon=True)
+    t.start()
+
+def _read_in_bg(self):
+    result = self._current_param["read_fn"](self._cv_image)
+    self.after(0, lambda r=result: self._set_feedback(r))
+```
+
+Il risultato viene scritto nel widget feedback via `after(0, ...)` (thread-safe). Esempi di feedback:
+- Carta: `"Rango: A, Seme: ♥ (Hearts)"`
+- Dealer: `"Bianco: 72.3% — Dealer trovato ✓"`
+- Bet: `"OCR: 2.50"`
+- Player: `"Card-back rilevato ✓ (45 pixel)"`
+
+---
+
+## Flusso di Salvataggio
+
+```
+Utente clicca [Salva]
+  → param["save_fn"]()
+      → _patch() o _patch_list_item()        # modifica settings.py via regex
+      → importlib.reload(settings)           # ricarica il modulo
+      → refs[name].reset(new_value)          # aggiorna la baseline
+  → canvas si aggiorna con i nuovi overlay
+```
+
+**[Salva Tutto]** itera tutti i parametri modificati e li salva in sequenza.
+
+**[Ripristina]** chiama `param["restore_fn"]()` che ripristina il valore baseline senza salvare su disco.

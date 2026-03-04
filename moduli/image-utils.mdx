@@ -1,0 +1,112 @@
+---
+title: "image_utils.py — Funzioni CV Pure"
+description: "Libreria di funzioni Computer Vision stateless: preprocessing OCR, template matching, rilevamento colori HSV."
+icon: "image"
+---
+
+## Responsabilità
+
+`app/vision/image_utils.py` è una **libreria di funzioni pure** (stateless) usata da `CardReader` e `TableReader`. Nessun attributo di istanza, nessuna dipendenza circolare.
+
+**Livello**: Dominio  
+**Pattern**: Pure functions / utility library
+
+---
+
+## Funzioni di Preprocessing OCR
+
+### `preprocess_number_roi(roi_gray) → np.ndarray`
+
+Preprocessing di una ROI in grayscale per migliorare l'accuratezza di Tesseract su testo piccolo.
+
+```
+roi_gray
+  → cv2.resize(3×, INTER_CUBIC)   # upscale per aumentare risoluzione
+  → cv2.GaussianBlur(kernel=3×3)  # rimozione rumore
+  → cv2.threshold(THRESH_OTSU)    # binarizzazione adattiva
+```
+
+---
+
+## Funzioni Template Matching
+
+### `load_card_templates(template_dir) → dict[str, list[np.ndarray]]`
+
+Carica tutti i template PNG dalla directory `templates/cards/`.
+
+- Supporta varianti con suffisso: `A.png`, `A_2.png`, `A_3.png`, ...
+- Applica `cv2.equalizeHist()` a ogni template al caricamento
+- Restituisce `{"A": [img, img_var2, ...], "K": [...], ...}`
+
+### `match_card_template(gray_crop, templates, threshold) → str`
+
+Identifica il rango di una carta tramite template matching.
+
+```python
+gray_crop = cv2.equalizeHist(gray_crop)   # normalizza contrasto
+
+best_score = 0.0
+best_rank = 'X'
+
+for rank, variants in templates.items():
+    for tmpl in variants:
+        resized = cv2.resize(gray_crop, (tmpl.shape[1], tmpl.shape[0]))
+        result  = cv2.matchTemplate(resized, tmpl, cv2.TM_CCOEFF_NORMED)
+        score   = np.max(result)
+        if score > best_score:
+            best_score = score
+            best_rank  = rank
+
+return best_rank if best_score >= threshold else 'X'
+```
+
+---
+
+## Funzioni HSV
+
+### `hex_to_hsv_range(hex_color, is_black=False) → (lower, upper)`
+
+Converte un colore HEX in un range HSV per `cv2.inRange()`.
+
+- Tolleranza: ±15 su H, floor 40% su S e V
+- `is_black=True`: usa un range di bassa luminosità (picche su sfondo verde)
+
+### `count_color_pixels(hsv_img, hex_color_str, is_black) → int`
+
+Conta i pixel nell'image HSV che rientrano nel range del colore dato.
+
+### `check_color(hsv_img, hex_color_str, min_pixels, is_black) → bool`
+
+Wrapper con soglia minima: `count_color_pixels(...) >= min_pixels`.
+
+---
+
+## Funzioni di Analisi ROI
+
+### `is_card_empty(card_img) → bool`
+
+Rileva se una ROI carta è vuota (sfondo tavolo verde, nessuna carta). Conta i pixel bianchi — una carta vuota ha quasi zero pixel bianchi.
+
+### `analyze_dealer_roi(roi) → dict`
+
+```python
+{"found": bool, "white_pct": float}
+```
+
+Conta pixel bianchi (V > 200, S < 30) per rilevare il dealer button. Restituisce la percentuale invece di un bool per permettere a `find_dealer()` di scegliere il best-match tra 6 ROI.
+
+### `analyze_player_roi(roi) → dict`
+
+```python
+{"active": bool}
+```
+
+Verifica la presenza di `COLOR_CARD_BACK` nella ROI di un avversario. Se il card-back color è presente → il giocatore ha carte → è attivo.
+
+### `analyze_hero_roi(roi) → dict`
+
+```python
+{"active": bool}
+```
+
+Verifica pixel bianchi (carte face-up) nella ROI dell'hero. Una ROI con pochi pixel bianchi indica fold (overlay verde trasparente) o assenza.

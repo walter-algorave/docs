@@ -1,0 +1,174 @@
+---
+title: "Computer Vision nel Progetto"
+description: "Cattura schermo Win32, spazio colore HSV, template matching e OCR Tesseract — le tecnologie CV al cuore del sistema."
+icon: "eye"
+---
+
+## Panoramica Pipeline CV
+
+Il sistema adotta una **pipeline ibrida** che combina quattro tecniche complementari, ognuna ottimale per un sottocompito diverso:
+
+| Tecnica | Modulo | Utilizzo |
+|---|---|---|
+| Win32 `PrintWindow` | `screen_capture.py` | Cattura fotogrammi da finestre in background |
+| HSV colorspace | `image_utils.py` | Rilevamento seme carte e card-back |
+| Template Matching | `image_utils.py` / `card_reader.py` | Identificazione rango carte |
+| OCR Tesseract | `image_utils.py` / `table_reader.py` | Lettura valori numerici (bet, pot) |
+
+---
+
+## 1. Cattura Schermo: `PrintWindow` + DPI
+
+### Perché non `mss` o screenshot standard?
+
+Le API di screenshot standard (`PIL.ImageGrab`, `mss`) catturano solo finestre in **primo piano**. Il Companion deve funzionare **passivamente** — PokerTH può essere minimizzata o dietro altre finestre.
+
+`PrintWindow` (Win32 GDI) invia un messaggio `WM_PRINT` alla finestra target, che si ridisegna in un Device Context virtuale **senza dover essere visibile**.
+
+```python
+# screen_capture.py — nucleo della cattura
+win32gui.GetWindowDC(hwnd)           # ottiene DC della finestra
+win32ui.CreateCompatibleDC(hwnd_dc)  # crea DC virtuale
+win32ui.CreateBitmap()               # alloca bitmap
+win32con.PrintWindow(hwnd, dc, 0)    # ridisegna la finestra nel DC
+# → PIL Image.frombuffer('RGB', (w,h), bmpinfo, 'raw', 'BGRX')
+```
+
+### `SetProcessDPIAware`
+
+Chiamata **a livello di modulo** (import time) per disabilitare la virtualizzazione DPI di Windows. Senza di essa, su monitor ad alta densità (HiDPI), le coordinate calibrate sarebbero scalate in modo errato rispetto ai pixel reali della finestra.
+
+```python
+ctypes.windll.user32.SetProcessDPIAware()
+```
+
+---
+
+## 2. Spazio Colore HSV: Rilevamento Semi e Card-Back
+
+### Perché HSV invece di RGB?
+
+In RGB, lo stesso colore "rosso" può avere valori R/G/B molto diversi a seconda dell'illuminazione o della compressione PNG. In **HSV** (Hue, Saturation, Value):
+
+- **H (tonalità)**: codifica il colore "puro" — rosso ≈ 0°, verde ≈ 120°, blu ≈ 240°
+- **S (saturazione)**: distingue colori puri da grigi/bianchi
+- **V (luminosità)**: gestisce variazioni di luce
+
+Questo rende il matching del colore **robusto alle variazioni di rendering** del motore grafico di PokerTH.
+
+### Conversione HEX → range HSV
+
+```python
+# image_utils.hex_to_hsv_range(hex_color, is_black)
+# Esempio: "#FF4444" (rosso cuori)
+# → H: [0-15, 345-360], S: [40%,100%], V: [40%,100%]
+# Tolleranza: ±15 su H, floor 40% su S e V
+```
+
+Il flag `is_black=True` usa un range di bassa luminosità (picche nere sul tavolo verde).
+
+### Utilizzi nel codice
+
+| Funzione | Input | Output |
+|---|---|---|
+| `_get_card_color(image)` | ROI carta BGR | `Colors` (Hearts/Diamonds/Clubs/Spades/Error) |
+| `analyze_player_roi(roi)` | ROI avversario | `True` se card-back visibile |
+| `analyze_hero_roi(roi)` | ROI hero | `True` se carte face-up (pixel bianchi) |
+| `_is_player_cards_hidden()` | 2 ROI carte hero | `True` se face-down (alta saturazione + bassa varianza) |
+
+---
+
+## 3. Template Matching: Riconoscimento Rango
+
+### Perché template matching per i ranghi?
+
+Le carte in PokerTH hanno ranghi a **posizione e dimensione fisse** (21×27 px, risoluzione 1280×720). Template matching con `cv2.TM_CCOEFF_NORMED` è deterministica, ultra-veloce e non richiede training.
+
+### Pipeline
+
+```
+ROI carta (21×27 px, grayscale)
+  → cv2.equalizeHist()          [normalizzazione contrasto]
+  → per ogni rango A..2:
+      per ogni variante (A.png, A_2.png, ...):
+          resize ROI a dimensione template
+          cv2.matchTemplate(TM_CCOEFF_NORMED)
+          np.max(result) → score
+  → rango con score massimo > threshold (0.80)
+  → oppure 'X' se nessuno supera la soglia
+```
+
+`cv2.equalizeHist()` viene applicato sia ai template (al caricamento) sia alle ROI live — garantisce che variazioni di luminosità non abbassino il match score.
+
+### Varianti dei template
+
+Ogni rango può avere più varianti (`A.png`, `A_2.png`, ...) per gestire rendering antialiasato o font leggermente diversi. `load_card_templates()` le carica tutte come lista associata al rango.
+
+### Cache class-level (multi-tavolo)
+
+```python
+# CardReader — shared across all instances
+_templates: dict = {}
+_templates_loaded: bool = False
+_templates_lock: threading.Lock = threading.Lock()
+
+def _get_card_value(self, gray_image):
+    if not CardReader._templates_loaded:
+        with CardReader._templates_lock:
+            if not CardReader._templates_loaded:
+                CardReader._templates = load_card_templates(...)
+                CardReader._templates_loaded = True
+```
+
+Double-checked locking: sicuro per N thread (N tavoli) che tentano di caricare i template al primo fotogramma.
+
+---
+
+## 4. OCR Tesseract: Valori Numerici
+
+### Configurazione
+
+```python
+OCR_NUMBER_CONFIG = '--psm 7 -c tessedit_char_whitelist=0123456789.,'
+```
+
+- `--psm 7`: modalità "singola riga di testo" — ottimale per bet/pot
+- `whitelist`: solo cifre, punto e virgola — elimina falsi positivi da caratteri non numerici
+
+### Preprocessing
+
+Prima di passare l'immagine a Tesseract, `preprocess_number_roi(roi_gray)` applica:
+
+```
+roi_gray
+  → cv2.resize(3×, INTER_CUBIC)    [upscale 3x per migliorare OCR su font piccoli]
+  → cv2.GaussianBlur(3×3)          [smoothing anti-rumore]
+  → cv2.threshold(THRESH_OTSU)     [binarizzazione adattiva]
+```
+
+### Ottimizzazione: soglia pixel prima di OCR
+
+`read_bets()` verifica che ci siano almeno **50 pixel luminosi** nella ROI bet prima di invocare Tesseract. Questo evita chiamate OCR costose su aree vuote (nessuna scommessa = zero pixel luminosi).
+
+---
+
+## 5. Ottimizzazione: Hash-Caching MD5
+
+Il principale collo di bottiglia della pipeline è OCR + template matching. La strategia di caching usa MD5:
+
+```python
+# Calcolo hash dell'area di interesse
+roi_bytes = image[y:y+h, x:x+w].tobytes()
+current_hash = hashlib.md5(roi_bytes).hexdigest()
+
+if current_hash == self._last_table_hash:
+    return self._last_table_cards  # skip completo
+```
+
+Hash separati per:
+- `_last_player_hash`: 2 ROI carte hero combinate
+- `_last_table_hash`: bounding box intero delle 5 carte board
+- `_last_bets_hash`: concatenazione di tutte le 6 ROI bet
+- `_last_pot_hash`: ROI del piatto
+
+Il caching serve anche come **graceful degradation**: se il frame corrente è corrotto (animazione, glitch), viene restituito l'ultimo stato valido.

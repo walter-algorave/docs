@@ -1,0 +1,167 @@
+---
+title: "Esecuzione dei Test"
+description: "Come eseguire la suite di test con pytest, opzioni utili e interpretazione dell'output."
+icon: "play"
+---
+
+## Prerequisiti
+
+I test richiedono le stesse dipendenze del progetto principale (vedi [Installazione](/installazione)), più pytest:
+
+```bash
+pip install pytest
+```
+
+`test_tools_image.py` richiede inoltre `opencv-python` e `numpy` (già inclusi in `requirements.txt`).
+
+---
+
+## Esecuzione Base
+
+```bash
+# Dalla root del progetto
+pytest tests/
+```
+
+Output atteso con tutti i test passanti:
+
+```
+========================= test session starts =========================
+platform win32 -- Python 3.11.x, pytest-7.x.x
+collected 105 items
+
+tests/test_models.py ............... [ 14%]
+tests/test_settings.py ...................... [ 35%]
+tests/test_engine.py .......................... [ 60%]
+tests/test_decision_engine.py ...................... [ 81%]
+tests/test_tools_image.py .................... [100%]
+
+========================= 105 passed in X.XXs =========================
+```
+
+---
+
+## Opzioni Utili
+
+### Verboso (mostra ogni test)
+
+```bash
+pytest tests/ -v
+```
+
+### Solo un file
+
+```bash
+pytest tests/test_decision_engine.py
+```
+
+### Solo un caso di test
+
+```bash
+pytest tests/test_decision_engine.py::TestHandKey
+pytest tests/test_decision_engine.py::TestHandKey::test_suited
+```
+
+### Ferma al primo errore
+
+```bash
+pytest tests/ -x
+```
+
+### Mostra output stdout (print)
+
+```bash
+pytest tests/ -s
+```
+
+### Report di copertura
+
+```bash
+pip install pytest-cov
+pytest tests/ --cov=app --cov-report=term-missing
+```
+
+---
+
+## Test che Richiedono Attenzione
+
+<AccordionGroup>
+  <Accordion title="test_settings.py — TESSERACT_PATH" icon="circle-info">
+    Il test verifica che `TESSERACT_PATH` sia una stringa valida, **non** che il file esista. Questo test passa anche se Tesseract non è installato.
+    
+    Per verificare che Tesseract sia funzionante, usa:
+    ```bash
+    pytest tests/test_tools_image.py -k "ocr"
+    ```
+  </Accordion>
+  <Accordion title="test_tools_image.py — Template PNG" icon="circle-info">
+    Alcuni test usano immagini sintetiche generate con numpy. Non richiedono i template card reali in `templates/cards/`. Il test di loading dei template (`test_load_card_templates`) verifica solo la struttura del dict restituito, non il contenuto dei PNG.
+  </Accordion>
+  <Accordion title="test_engine.py — Nessuna finestra PokerTH richiesta" icon="circle-check">
+    Tutti i test di `GameSession` e `StateTracker` usano screenshot mock. Non serve PokerTH aperto. Le dipendenze Win32 sono bypassate tramite injection.
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Struttura delle Classi di Test
+
+```
+tests/
+├── __init__.py
+├── test_models.py
+│   ├── TestColors
+│   ├── TestCard
+│   └── TestScreenshot
+├── test_settings.py
+│   └── TestSettings
+├── test_engine.py
+│   ├── TestGameState
+│   ├── TestStateTracker
+│   ├── TestHeroPredicates
+│   └── TestHandIdReset
+├── test_decision_engine.py
+│   ├── TestHandKey
+│   ├── TestLookup
+│   ├── TestSeatToPosition
+│   ├── TestNormalizePosition
+│   └── TestPreflopEngine
+└── test_tools_image.py
+    ├── TestPreprocessing
+    ├── TestHsvUtils
+    └── TestTemplateMatch
+```
+
+---
+
+## Aggiungere Nuovi Test
+
+Il pattern di riferimento per i test del DSS è `make_snapshot()` in `test_decision_engine.py`:
+
+```python
+def make_snapshot(**overrides):
+    """Helper per creare snapshot con valori di default sensati."""
+    base = {
+        "game_state":         "Preflop",
+        "player_cards":       [Card("A", Colors.Hearts), Card("K", Colors.Diamonds)],
+        "table_cards":        [],
+        "relative_position":  "CO",
+        "active_players":     [0, 1, 2, 3, 4, 5],
+        "hand_id":            1,
+        "player_bets":        {0: 0.0, 1: 0.5, 2: 1.0},
+        "pot_amount":         1.5,
+        "hero_folded":        False,
+        "hero_had_cards":     True,
+        "dealer_position":    2,
+    }
+    base.update(overrides)
+    return base
+
+class TestMyScenario(unittest.TestCase):
+    def test_example(self):
+        snapshot = make_snapshot(relative_position="EP", player_bets={0:0, 1:0.5, 2:1.0})
+        tracker = HandHistoryTracker()
+        engine  = PreflopDecisionEngine(tracker)
+        tracker.update(snapshot)
+        self.assertEqual(engine.evaluate(snapshot), Decision.RAISE)
+```

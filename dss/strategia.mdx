@@ -1,0 +1,118 @@
+---
+title: "Logica Strategica"
+description: "RFI_TABLES, VS_RAISE_TABLES, hand_key, lookup e la catena di guardie di evaluate()."
+icon: "chess-queen"
+---
+
+## Due Scenari Preflop
+
+Il DSS opera in due scenari distinti, identificati da `HandHistoryTracker.is_rfi()`:
+
+<CardGroup cols={2}>
+  <Card title="RFI — Raise First In" icon="arrow-up">
+    Nessun giocatore ha ancora rilanciato prima dell'hero. L'hero deve decidere se aprire il pot.
+    
+    Usa: `RFI_TABLES[hero_position]`
+  </Card>
+  <Card title="VS Raise" icon="arrows-left-right">
+    Un avversario ha già rilanciato. L'hero deve decidere se ri-rilanciare, chiamare o foldare.
+    
+    Usa: `VS_RAISE_TABLES["VS_" + raiser_position]`
+  </Card>
+</CardGroup>
+
+---
+
+## `hand_key(card1, card2) → str`
+
+La notazione standard per identificare una mano nel lookup delle tabelle.
+
+### Formato
+
+| Tipo | Formato | Esempio |
+|---|---|---|
+| Pocket pair | `"XX"` | `"AA"`, `"KK"`, `"22"` |
+| Suited | `"XYs"` | `"AKs"`, `"T9s"`, `"76s"` |
+| Offsuit | `"XYo"` | `"AKo"`, `"T9o"`, `"76o"` |
+
+La carta con **rango più alto** va sempre prima. L'ordine è:
+```
+A > K > Q > J > T > 9 > 8 > 7 > 6 > 5 > 4 > 3 > 2
+```
+
+### Esempi
+
+```python
+hand_key(Card("A", Hearts), Card("K", Diamonds))  → "AKo"
+hand_key(Card("K", Hearts), Card("A", Clubs))     → "AKo"  # A sempre prima
+hand_key(Card("A", Hearts), Card("K", Hearts))    → "AKs"  # stesso seme
+hand_key(Card("T", Clubs),  Card("T", Diamonds))  → "TT"   # pocket pair
+hand_key(Card("X", Hearts), Card("A", Clubs))     → ""     # rango invalido
+```
+
+---
+
+## `lookup(table, key) → str`
+
+```python
+def lookup(table: dict, key: str) -> str:
+    if key in table["raise"]: return "raise"
+    if key in table["call"]:  return "call"
+    return "fold"              # default
+```
+
+La politica di default è **fold** — se una mano non è in nessuna lista, va abbandonata.
+
+---
+
+## Struttura Tabelle GTO
+
+### `RFI_TABLES` — Esempio CO
+
+```python
+RFI_TABLES["CO"] = {
+    "raise": [
+        "AA", "KK", "QQ", "JJ", "TT", "99", "88", "77", "66", "55", "44",
+        "AKs", "AQs", "AJs", "ATs", "A9s", "A8s", "A7s", "A6s", "A5s",
+        "AKo", "AQo", "AJo", "ATo",
+        "KQs", "KJs", "KTs", "K9s",
+        "KQo", "KJo",
+        "QJs", "QTs", "Q9s",
+        "JTs", "J9s",
+        "T9s", "T8s",
+        "98s", "87s", "76s", "65s", "54s",
+        ...
+    ],
+    "call": []    # nessun limp in questa strategia
+}
+```
+
+EP è più restrittivo (solo mani premium), BU è il più largo (molte mani apribili).
+
+---
+
+## Catena di Guardie di `evaluate()`
+
+Il `PreflopDecisionEngine.evaluate()` usa una **cascata di guardie** che restituisce un `Decision` non-terminale prima di arrivare al lookup se qualcosa non è pronto:
+
+```
+game_state != "Preflop"          → WAIT
+not calibrated                   → WAIT
+hand_compromised                 → COMPROMISED
+len(player_cards) < 2           → WAIT
+hand_key == ""                   → WAIT
+relative_position == "Unknown"   → WAIT
+────────────────────────────────────────
+[lookup tabella → RAISE / CALL / FOLD_CHECK]
+```
+
+Solo quando **tutte le guardie passano**, si esegue il lookup.
+
+### Caso Speciale: BB in RFI
+
+```python
+if history.is_rfi() and hero_pos == "BB":
+    return Decision.FOLD_CHECK   # check gratuito, nessuna tabella
+```
+
+Il BB ha opzione di check gratuito in RFI — non c'è nessuna tabella RFI per BB, la risposta è sempre `FOLD_CHECK` (nel contesto BB = check).

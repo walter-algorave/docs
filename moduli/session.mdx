@@ -1,0 +1,153 @@
+---
+title: "session.py — Orchestrazione Analisi"
+description: "AnalysisEngine, GameSession e StateTracker: il cuore del ciclo di analisi multi-tavolo."
+icon: "circle-play"
+---
+
+## Responsabilità
+
+`app/engine/session.py` coordina l'intero ciclo di analisi. Contiene tre classi principali: `AnalysisEngine` (loop multi-tavolo), `GameSession` (stato di un singolo tavolo) e `StateTracker` (Observer publisher).
+
+**Livello**: Applicazione
+
+---
+
+## `AnalysisEngine`
+
+Entry point del motore di analisi. Riceve un listener (`GuiOutput` o `ConsoleOutput`) e gestisce N tavoli in parallelo.
+
+### Costruzione
+
+```python
+engine = AnalysisEngine(output_listener=GuiOutput(...))
+```
+
+Al costruttore:
+1. `ScreenCapture.find_windows()` → lista hwnd
+2. `ScreenCapture.grab(hwnds)` → lista Screenshot
+3. Per ogni Screenshot: crea `GameSession` + `StateTracker`
+4. Inietta il listener condiviso in ogni `StateTracker`
+
+### `start()` / `stop()`
+
+```python
+engine.start()   # blocca — da eseguire in un thread daemon
+engine.stop()    # setta _running = False
+```
+
+### `_loop()` — Ciclo da 1 Hz
+
+```python
+while self._running:
+    hwnds = self._capture.find_windows()
+
+    # Rileva tavoli chiusi
+    closed = known_tables - active_tables(hwnds)
+    for name in closed:
+        self._listener.on_table_closed(name)
+        del self._sessions[name], self._trackers[name]
+
+    screenshots = self._capture.grab(hwnds)
+
+    # Rileva nuovi tavoli
+    for ss in screenshots:
+        if ss.tableName not in self._sessions:
+            session = GameSession(ss.tableName)
+            tracker = StateTracker([self._listener])
+            self._sessions[ss.tableName] = session
+            self._trackers[ss.tableName] = tracker
+
+    # Aggiorna ogni tavolo
+    for ss in screenshots:
+        session = self._sessions[ss.tableName]
+        session.update(ss)
+        self._trackers[ss.tableName].check(session)
+
+    time.sleep(1.0)
+```
+
+---
+
+## `GameSession`
+
+Stato di un singolo tavolo PokerTH. Aggiornato ad ogni ciclo.
+
+### Attributi di Stato
+
+| Attributo | Tipo | Descrizione |
+|---|---|---|
+| `game_state` | `str` | Preflop / Flop / Turn / River / Unknown |
+| `player_cards` | `list[Card]` | 0 o 2 carte hero |
+| `table_cards` | `list[Card]` | 0, 3, 4 o 5 carte board |
+| `dealer_position` | `int` | Seat dealer (-1 se non trovato) |
+| `relative_position` | `str` | Posizione relativa hero |
+| `active_players` | `list[int]` | Seat con giocatori attivi |
+| `initial_active_players` | `int` | Max attivi visti nel turno corrente |
+| `hero_folded` | `bool` | L'hero ha folded in questa mano |
+| `hero_had_cards` | `bool` | L'hero aveva carte in questa mano |
+| `hand_id` | `int` | Contatore monotono mano corrente |
+| `player_bets` | `dict[int, float]` | Bet attuale per seat |
+| `pot_amount` | `float` | Piatto corrente |
+
+### `update(screenshot)` — Pipeline Completa
+
+```
+cv2.imread(screenshot.filename)
+  → get_active_players(img)
+  → hero_folded flag update
+  → read_table_cards(img)
+  → check_game_state()               [len(table_cards) → stato]
+  → get_pot(img)
+  → new-hand reset logic             [hand_id++ se pot drop]
+  → read_player_cards(img)           [freeze on fold]
+  → find_dealer(img)
+  → get_relative_position(...)
+```
+
+**Freeze on fold**: se `hero_folded=True`, le carte hero vengono bloccate all'ultimo stato valido (`_last_known_player_cards`). Le carte non vengono rilette perché l'overlay di fold nasconde le carte precedenti.
+
+---
+
+## `StateTracker`
+
+Publisher del pattern Observer. Mantiene una copia del precedente snapshot per il diff.
+
+### `check(session) → bool`
+
+Confronta ogni campo di `session` con il precedente. Se almeno un campo è cambiato:
+1. `_sync(session)` — aggiorna lo snapshot precedente
+2. `_snapshot()` — costruisce il dict immutabile
+3. Notifica tutti i listener: `listener.on_state_changed(snapshot)`
+
+La comparazione del pot usa `abs(new - old) > 0.01` per tollerare micro-variazioni OCR.
+
+### `_snapshot() → dict`
+
+Restituisce un dict con tutti i campi di stato. Il dict è immutabile per convenzione — i listener non devono modificarlo.
+
+---
+
+## Funzioni Predicato (Stateless)
+
+### `is_hero_turn(snapshot) → bool`
+
+```python
+return (
+    snapshot["game_state"] in ("Preflop", "Flop", "Turn", "River")
+    and len(snapshot["player_cards"]) == 2
+    and snapshot["player_bets"].get(0, 0) < max(snapshot["player_bets"].values(), default=0)
+)
+```
+
+L'hero deve agire se la sua bet è inferiore alla bet massima attuale.
+
+### `is_hero_folded(snapshot) → bool`
+
+```python
+if snapshot["game_state"] == "Preflop":
+    return snapshot["hero_had_cards"] and snapshot["hero_folded"]
+else:
+    return snapshot["hero_folded"] or len(snapshot["player_cards"]) == 0
+```
+
+Al Preflop, "folded" richiede che l'hero avesse davvero carte (per evitare falsi positivi a inizio sessione).
