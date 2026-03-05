@@ -1,6 +1,6 @@
 ---
 title: "Panoramica Calibrazione"
-description: "Perché è necessaria la calibrazione ROI, cosa può essere calibrato e come funziona il sistema di patch live."
+description: "Perché è necessaria la calibrazione ROI, cosa può essere calibrato e come funziona il sistema JSON di persistenza."
 icon: "crosshairs"
 ---
 
@@ -24,24 +24,23 @@ Il sistema di calibrazione di PokerTH Companion permette di **ridefinire grafica
 
 1. **Drag-to-draw**: si disegna la ROI direttamente sull'immagine
 2. **Feedback live**: la ROI appena disegnata viene letta e il risultato è mostrato immediatamente
-3. **Salvataggio persistente**: le coordinate modificate vengono scritte in `settings.py` via regex — persistono ai riavvii senza bisogno di un file di configurazione separato
+3. **Salvataggio persistente**: le coordinate modificate vengono scritte in `calibration_data.json` — caricate da `settings.py` all'avvio successivo
 4. **Ripristino**: ogni parametro può essere ripristinato alla baseline della sessione
 
 ---
 
-## Il Sistema Regex-Patch
+## Il Sistema JSON di Persistenza
 
 ```python
-# calibration_params._patch_list_item("HERO_CARD_POSITIONS", 0, [105, 198])
+# calibration_params._save_to_json("HERO_CARD_POSITIONS", [[105, 198], [130, 200]])
 
-# Questo modifica settings.py da:
-HERO_CARD_POSITIONS = [[100, 200], [130, 200]]
-
-# a:
-HERO_CARD_POSITIONS = [[105, 198], [130, 200]]
+# Questo crea/aggiorna calibration_data.json:
+{
+    "HERO_CARD_POSITIONS": [[105, 198], [130, 200]]
+}
 ```
 
-`settings.py` viene modificato **in-place** con una sostituzione regex precisa sull'elemento specifico della lista. Dopo la scrittura, il modulo viene ricaricato con `importlib.reload(settings)` — le nuove coordinate saranno attive al prossimo ciclo di analisi senza riavviare il programma.
+Ogni salvataggio scrive la chiave e il nuovo valore in `app/calibration_data.json`. All'avvio successivo, `settings.py` legge il file (se presente) e sovrascrive i valori delle variabili globali corrispondenti — le nuove coordinate sono attive senza modificare il sorgente e senza riavviare il programma.
 
 ---
 

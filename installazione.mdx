@@ -83,16 +83,19 @@ PokerTHComp/
 │   ├── settings.py              ← coordinate ROI, soglie, percorsi
 │   ├── calibration_params.py   ← definizione parametri calibrazione
 │   ├── calibration.py          ← finestra calibrazione interattiva
-│   ├── gui.py                  ← finestra principale + GuiOutput
+│   ├── gui.py                  ← finestra principale (PokerTHGui)
+│   ├── gui_output.py           ← GuiOutput (Observer subscriber)
 │   ├── gui_views.py            ← MultiTableView, DetailView, TableCard
 │   ├── capture/
 │   │   └── screen_capture.py   ← cattura Win32 con PrintWindow
 │   ├── engine/
 │   │   ├── session.py          ← AnalysisEngine, GameSession, StateTracker
+│   │   ├── positions.py        ← seat_to_position (topologia tavolo)
 │   │   ├── hand_history.py     ← HandHistoryTracker
 │   │   ├── decision_engine.py  ← PreflopDecisionEngine
-│   │   ├── preflop_tables.py   ← tabelle GTO + seat_to_position
-│   │   └── file_logger.py      ← logging JSONL
+│   │   ├── preflop_tables.py   ← tabelle GTO
+│   │   ├── file_logger.py      ← logging JSONL
+│   │   └── debug_output.py     ← ConsoleOutput (debug CLI)
 │   └── vision/
 │       ├── card_reader.py      ← lettura carte hero + board
 │       ├── table_reader.py     ← dealer, giocatori attivi, bet, pot

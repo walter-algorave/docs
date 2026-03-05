@@ -1,14 +1,18 @@
 ---
-title: "preflop_tables.py — Tabelle GTO e Posizioni"
-description: "Tabelle RFI e VS_RAISE di Corropoli, seat_to_position, normalize_position e hand_key."
+title: "preflop_tables.py — Tabelle GTO"
+description: "Tabelle RFI e VS_RAISE di Corropoli, normalize_position e hand_key. seat_to_position è ora in engine/positions.py (re-esportato per compatibilità)."
 icon: "table-list"
 ---
 
 ## Responsabilità
 
-`app/engine/preflop_tables.py` contiene le **tabelle strategiche GTO** e le funzioni di calcolo posizione. È la knowledge base del DSS — pura data + funzioni pure, nessuno stato.
+`app/engine/preflop_tables.py` contiene le **tabelle strategiche GTO** e le funzioni di calcolo mano/posizione. È la knowledge base del DSS — pura data + funzioni pure, nessuno stato.
 
 **Livello**: Applicazione (dati e logica strategica)
+
+<Note>
+`seat_to_position` e `_POS_MAP` sono stati spostati in `engine/positions.py` per rispettare SRP. `preflop_tables.py` li re-esporta per backward compatibility. Vedi [positions](/moduli/positions).
+</Note>
 
 ---
 
@@ -76,7 +80,11 @@ return "fold"             # default se non presente
 
 ---
 
-## `seat_to_position(seat, dealer, active_players) → str`
+## `seat_to_position` e `_POS_MAP`
+
+<Note>
+Questa funzione è stata spostata in `engine/positions.py`. `preflop_tables.py` la re-esporta con `from engine.positions import seat_to_position  # noqa: F401`. Vedi la documentazione completa in [positions](/moduli/positions).
+</Note>
 
 Calcola la posizione relativa dell'hero dato il seat dealer e i giocatori attivi.
 

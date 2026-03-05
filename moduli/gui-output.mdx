@@ -1,0 +1,96 @@
+---
+title: "gui_output.py — Observer GUI Subscriber"
+description: "GuiOutput: collega StateTracker alla GUI, calcola Decision e persiste il log JSONL. Separato da gui.py per rispettare la separazione degli strati."
+icon: "plug-circle-check"
+---
+
+## Responsabilità
+
+`app/gui_output.py` implementa il principale subscriber del pattern Observer. Riceve gli snapshot da `StateTracker`, calcola la `Decision` tramite il motore GTO e delega l'aggiornamento visivo a `PokerTHGui._on_snapshot()` in modo thread-safe.
+
+**Livello**: Applicazione (orchestrazione DSS)  
+**Pattern**: Observer Subscriber, Lazy Initialization, Dependency Injection
+
+<Note>
+`GuiOutput` era originariamente in `gui.py` (Presentation Layer). Lo spostamento in `gui_output.py` rispetta SRP: `gui.py` rimane puro Presentation; `gui_output.py` è Application.
+</Note>
+
+---
+
+## `DashboardProtocol`
+
+Interfaccia (`typing.Protocol`) che il Mediator GUI (`PokerTHGui`) deve esporre verso `GuiOutput`. Questo disaccoppia l'Observer dal tipo concreto della GUI.
+
+```python
+class DashboardProtocol(Protocol):
+    def write_system_message(self, msg: str) -> None: ...
+    def after(self, ms: int, func) -> None: ...
+    def _on_snapshot(self, table_name: str, snapshot: dict) -> None: ...
+    def remove_table(self, table_name: str) -> None: ...
+```
+
+---
+
+## `GuiOutput`
+
+### Stato Interno
+
+| Attributo | Tipo | Descrizione |
+|---|---|---|
+| `dashboard` | `DashboardProtocol` | Riferimento alla GUI (per `after(0, ...)`) |
+| `_trackers` | `dict[str, HandHistoryTracker]` | Un tracker per tavolo (lazy init) |
+| `_decisions` | `dict[str, PreflopDecisionEngine]` | Un engine per tavolo (lazy init) |
+| `_logger` | `FileLogger \| None` | Logger JSONL condiviso (opzionale) |
+
+### `__init__(dashboard, log_dir=None)`
+
+```python
+output = GuiOutput(gui_window, log_dir="app/logs")
+```
+
+Il `FileLogger` viene creato solo se `log_dir` è fornito — semplifica i test unitari che non necessitano di file I/O.
+
+### `_engine_for(table_name) → PreflopDecisionEngine`
+
+Lazy init per nuovo tavolo: crea `HandHistoryTracker` + `PreflopDecisionEngine` alla prima apparizione del `table_name`. L'error callback del tracker instrada i messaggi di anomalia verso `dashboard.write_system_message()` invece di stdout.
+
+---
+
+## `on_state_changed(snapshot)`
+
+Pipeline di aggiornamento completa per ogni snapshot ricevuto da `StateTracker`:
+
+```
+snapshot in
+  │
+  ├─ _engine_for(table_name)           [lazy init tracker + engine]
+  ├─ tracker.update(snapshot)          [aggiorna HandHistoryTracker]
+  │
+  ├─ is_hero_folded(snapshot)?
+  │    ├─ Sì → decision = Decision.FOLDED, our_turn = False
+  │    └─ No → decision = engine.evaluate(snapshot)
+  │                our_turn = is_hero_turn(snapshot)
+  │
+  ├─ timestamp corrente (HH:MM:SS)
+  │
+  ├─ logger.on_state_changed({...snapshot, ts, decision})  [se logger presente]
+  │
+  └─ dashboard.after(0, lambda:
+         dashboard._on_snapshot(snapshot, decision, our_turn, ts))
+                                        [aggiornamento thread-safe GUI]
+```
+
+**Thread safety**: tutto l'aggiornamento GUI avviene tramite `after(0, ...)` — il lambda viene eseguito nel mainloop tkinter, non nel thread daemon dell'engine.
+
+---
+
+## `on_table_closed(table_name)`
+
+Chiamato da `AnalysisEngine` quando una finestra PokerTH viene chiusa. Rimuove tracker ed engine per il tavolo e notifica la GUI di rimuovere il pannello:
+
+```python
+def on_table_closed(self, table_name: str) -> None:
+    self._trackers.pop(table_name, None)
+    self._decisions.pop(table_name, None)
+    self.dashboard.after(0, lambda: self.dashboard.remove_table(table_name))
+```

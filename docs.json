@@ -43,6 +43,10 @@
         "tab": "Moduli",
         "groups": [
           {
+            "group": "Punto di Ingresso",
+            "pages": ["moduli/main"]
+          },
+          {
             "group": "Dati e Configurazione",
             "pages": ["moduli/models", "moduli/settings"]
           },
@@ -65,13 +69,16 @@
               "moduli/hand-history",
               "moduli/decision-engine",
               "moduli/preflop-tables",
-              "moduli/file-logger"
+              "moduli/positions",
+              "moduli/file-logger",
+              "moduli/debug-output"
             ]
           },
           {
             "group": "Presentazione",
             "pages": [
               "moduli/gui",
+              "moduli/gui-output",
               "moduli/gui-views",
               "moduli/calibration",
               "moduli/calibration-params"

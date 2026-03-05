@@ -24,21 +24,24 @@ logger = FileLogger()
 
 Il file viene creato con il timestamp della sessione (`YYYY-MM-DD_HH-MM-SS.jsonl`) nella directory `logs/`. Un file per sessione di analisi.
 
-### `log(enriched_snapshot: dict)`
+### `on_state_changed(enriched_snapshot: dict)`
 
-Scrive una riga JSON nel file, thread-safe.
+Metodo primario dell'interfaccia Observer. Scrive una riga JSON nel file, thread-safe.
 
 ```python
-def log(self, enriched_snapshot: dict):
+def on_state_changed(self, enriched_snapshot: dict):
     with self._lock:
         self._file.write(json.dumps(enriched_snapshot, default=str) + "\n")
         self._file.flush()
+
+log = on_state_changed  # alias per backward compatibility
 ```
 
 - `threading.Lock` protegge da write concorrenti (N tavoli → N chiamate simultanee)
 - `default=str` serializza oggetti non-JSON (`Card`, `Colors`, `datetime`) come stringa
 - `flush()` immediato garantisce che ogni riga sia su disco prima del ciclo successivo
 - `OSError` viene silenziosamente ignorata per non interrompere l'analisi
+- `log` è un alias per backward compatibility con eventuali chiamate dirette
 
 ### `log_path` (property)
 

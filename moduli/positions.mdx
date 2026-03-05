@@ -1,0 +1,91 @@
+---
+title: "positions.py — Topologia del Tavolo"
+description: "seat_to_position e _POS_MAP: conversione seat → posizione relativa (BU/SB/BB/EP/MP/CO) per tavolo 6-max. Separato da preflop_tables.py per rispettare SRP."
+icon: "circle-nodes"
+---
+
+## Responsabilità
+
+`app/engine/positions.py` contiene la logica di mappatura topologica del tavolo poker 6-max: converte un numero di seat nella posizione relativa rispetto al dealer button.
+
+**Livello**: Applicazione  
+**Pattern**: Pure functions, nessuno stato
+
+<Note>
+`seat_to_position` era originariamente in `preflop_tables.py`. Lo spostamento in `positions.py` rispetta SRP: la topologia del tavolo è un concern distinto dalle tabelle GTO. `preflop_tables.py` la re-esporta con `from engine.positions import seat_to_position  # noqa: F401` per backward compatibility.
+</Note>
+
+---
+
+## `_POS_MAP`
+
+```python
+_POS_MAP = {0: "BU", 1: "SB", 2: "BB", 3: "EP", 4: "MP", 5: "CO"}
+```
+
+Mappa l'indice nella sequenza oraria dal dealer → nomenclatura 6-max standard:
+
+| Indice | Posizione | Note |
+|---|---|---|
+| 0 | BU (Button / Dealer) | Primo nella lista oraria dal dealer |
+| 1 | SB (Small Blind) | |
+| 2 | BB (Big Blind) | |
+| 3 | EP (Early Position) | |
+| 4 | MP (Middle Position) | |
+| 5 | CO (Cutoff) | |
+
+---
+
+## `seat_to_position(seat, dealer, active_players) → str`
+
+Calcola la posizione relativa dell'hero dato il seat dealer e i giocatori attivi.
+
+```python
+def seat_to_position(seat: int, dealer: int, active_players: list = None) -> str:
+    if dealer < 0 or not active_players or seat not in active_players:
+        return "Unknown"
+
+    # Costruisce lista ordinata in senso orario da dealer
+    action_order = [(dealer + i) % 6 for i in range(6)]
+    ordered_active = [s for s in action_order if s in active_players]
+
+    player_index = ordered_active.index(seat)
+    return _POS_MAP.get(player_index, "Unknown")
+```
+
+**Comportamento con tavoli short-handed**: con meno di 6 giocatori, le posizioni si "comprimono" automaticamente — sono presenti solo le posizioni che corrispondono ai giocatori attivi, mantenendo BU/SB/BB come ultime tre.
+
+### Esempi
+
+| Dealer | Hero Seat | Attivi | Posizione Hero |
+|---|---|---|---|
+| 0 | 0 | tutti | BU |
+| 1 | 0 | tutti | CO |
+| 2 | 0 | tutti | MP |
+| 5 | 0 | tutti | SB |
+| 4 | 0 | [0, 4] | BB (heads-up) |
+
+### Valori di ritorno
+
+- `"BU"` / `"SB"` / `"BB"` / `"EP"` / `"MP"` / `"CO"` — posizione calcolata
+- `"Unknown"` — dealer non rilevato (`dealer < 0`), lista attivi vuota, o seat non nella lista attivi
+
+---
+
+## Utilizzo
+
+```python
+from engine.positions import seat_to_position
+
+pos = seat_to_position(
+    seat=0,              # Hero seat (0 = basso)
+    dealer=2,
+    active_players=[0, 1, 2, 3, 4, 5]
+)
+# → "MP"
+```
+
+Importato da:
+- `engine/hand_history.py` — per calcolare la posizione del raiser
+- `vision/table_reader.py` — per la posizione relativa dell'Hero
+- `engine/preflop_tables.py` — re-export per backward compatibility

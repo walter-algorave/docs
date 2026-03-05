@@ -1,21 +1,27 @@
 ---
 title: "gui.py — Finestra Principale"
-description: "PokerTHGui: orchestratore dell'interfaccia utente. GuiOutput: subscriber Observer che collega analisi e GUI."
+description: "PokerTHGui: orchestratore dell'interfaccia utente. GuiOutput (in gui_output.py): subscriber Observer che collega analisi e GUI."
 icon: "window-maximize"
 ---
 
 ## Responsabilità
 
-`app/gui.py` contiene la finestra principale dell'applicazione (`PokerTHGui`) e il subscriber Observer (`GuiOutput`) che riceve gli snapshot dall'engine e coordina DSS, logging e aggiornamenti GUI.
+`app/gui.py` contiene la **finestra principale** dell'applicazione (`PokerTHGui`). Il subscriber Observer (`GuiOutput`) che riceve gli snapshot dall'engine e coordina DSS, logging e aggiornamenti GUI è stato spostato in `app/gui_output.py` per separazione degli strati.
 
 **Livello**: Presentazione  
-**Dipendenze**: `customtkinter`, `engine/session.py`, `engine/hand_history.py`, `engine/decision_engine.py`, `engine/file_logger.py`
+**Dipendenze**: `customtkinter`, `engine/session.py`, `gui_output.py`
+
+<Note>
+`GuiOutput` non è più definito in `gui.py` — si trova in `gui_output.py` (livello Applicazione). Vedi [gui-output](/moduli/gui-output).
+</Note>
 
 ---
 
 ## `GuiOutput` — Observer Subscriber
 
-Implementa l'interfaccia listener richiesta da `StateTracker`.
+<Note>
+`GuiOutput` è ora in `app/gui_output.py`. La documentazione completa si trova in [gui-output](/moduli/gui-output).
+</Note>
 
 ### Stato Interno
 

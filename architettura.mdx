@@ -11,7 +11,8 @@ Il sistema è organizzato in **4 livelli SOLID** con dipendenze unidirezionali (
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │  LIVELLO PRESENTAZIONE                                       │
-│  gui.py          → PokerTHGui, GuiOutput (Observer)         │
+│  gui.py          → PokerTHGui                               │
+│  gui_output.py   → GuiOutput (Observer)                     │
 │  gui_views.py    → MultiTableView, DetailView, TableCard    │
 │  calibration.py  → CalibrationWindow                        │
 └─────────────────────────┬───────────────────────────────────┘
@@ -20,9 +21,11 @@ Il sistema è organizzato in **4 livelli SOLID** con dipendenze unidirezionali (
 │  LIVELLO APPLICAZIONE                                        │
 │  engine/session.py         → AnalysisEngine, GameSession,   │
 │                              StateTracker                    │
+│  engine/positions.py       → seat_to_position               │
 │  engine/hand_history.py    → HandHistoryTracker             │
 │  engine/decision_engine.py → PreflopDecisionEngine          │
 │  engine/file_logger.py     → FileLogger                     │
+│  engine/debug_output.py    → ConsoleOutput (debug CLI)      │
 └─────────────────────────┬───────────────────────────────────┘
                           │  chiamate di dominio
 ┌─────────────────────────▼───────────────────────────────────┐
@@ -41,7 +44,7 @@ Il sistema è organizzato in **4 livelli SOLID** con dipendenze unidirezionali (
 ```
 
 <Note>
-`settings.py` è l'unico concern trasversale: viene letto da tutti i livelli ma scritto solo dal sistema di calibrazione.
+`settings.py` è l'unico concern trasversale: viene letto da tutti i livelli. Il sistema di calibrazione scrive su `calibration_data.json`; `settings.py` li carica come override all'avvio.
 </Note>
 
 ## Data Flow — Ciclo da 1 Hz
@@ -95,7 +98,7 @@ GuiOutput.on_state_changed(snapshot)
   │    └─ hand_id cambiato → reset; inferisce BB; rileva raise
   ├─ is_hero_folded() → bool
   ├─ PreflopDecisionEngine.evaluate(snapshot) → Decision
-  ├─ FileLogger.log(enriched_snapshot)
+  ├─ FileLogger.on_state_changed(enriched_snapshot)
   └─ gui.after(0, lambda: _on_snapshot(...))  [thread-safe]
 ```
 
@@ -108,7 +111,7 @@ GuiOutput.on_state_changed(snapshot)
 | **Hash-caching** | `CardReader`, `TableReader` | Salta OCR/template matching quando i pixel ROI non cambiano (MD5 per ROI) |
 | **Per-instance cache** | `CardReader` instanziato per ogni `GameSession` | Cache indipendenti per multi-tavolo |
 | **Stateless predicates** | `is_hero_turn()`, `is_hero_folded()` | Funzioni pure sullo snapshot dict — nessuna storia necessaria |
-| **Regex-patch settings** | `calibration_params._patch()` | Persiste la calibrazione modificando `settings.py` live via regex |
+| **JSON calibration** | `calibration_params._save_to_json()` | Persiste la calibrazione in `calibration_data.json`; `settings.py` carica gli override all'avvio |
 | **Monotonic hand_id** | `GameSession` → `HandHistoryTracker` | Rileva transizioni Preflop→Preflop che il diff di `game_state` non vede |
 | **Double-checked locking** | `CardReader._templates_lock` | Thread-safe lazy loading dei template PNG in scenari multi-tavolo |
 

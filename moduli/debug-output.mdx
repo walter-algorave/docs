@@ -1,0 +1,79 @@
+---
+title: "debug_output.py — Output Debug CLI"
+description: "ConsoleOutput e format_snapshot: listener Observer per output testuale su stdout. Usato come fallback CLI e nei test unitari. Separato da session.py per rispettare SRP."
+icon: "terminal"
+---
+
+## Responsabilità
+
+`app/engine/debug_output.py` fornisce un output testuale degli snapshot di stato su `stdout`. È il listener di default usato da `AnalysisEngine` quando nessun listener GUI viene iniettato (modalità CLI o test).
+
+**Livello**: Presentazione (output testuale)  
+**Pattern**: Observer Subscriber, Pure function
+
+<Note>
+`ConsoleOutput` e `format_snapshot` erano originariamente in `session.py` (Application Layer). Lo spostamento in `debug_output.py` rispetta SRP: `session.py` non deve dipendere da logica di display. `session.py` re-esporta `ConsoleOutput` per backward compatibility.
+</Note>
+
+---
+
+## `format_snapshot(s: dict) → str`
+
+Funzione pura che converte uno snapshot di stato in una riga leggibile su una singola riga.
+
+```python
+def format_snapshot(s: dict) -> str:
+    n_players = len(s.get("active_players", []))
+    cards_str = " ".join(str(c) for c in s.get("player_cards", [])) or "—"
+    board_str = " ".join(str(c) for c in s.get("table_cards",  [])) or "—"
+    pot       = s.get("pot_amount", 0.0)
+
+    parts = [
+        s.get("table_name", "?"),
+        f"{s.get('game_state','?')} {s.get('relative_position','?')}",
+        f"[{cards_str}]",
+        f"Board:[{board_str}]",
+        f"{n_players} gioc",
+        f"Pot:{pot:.1f}",
+    ]
+    return " | ".join(parts)
+```
+
+### Esempio di output
+
+```
+Tavolo-1 | Preflop CO | [HA DK] | Board:[—] | 6 gioc | Pot:1.5
+```
+
+<Note>
+La GUI non usa questa funzione — costruisce il proprio testo di log tramite `_render_log_entry()` direttamente dal dict grezzo, senza passare da `format_snapshot`.
+</Note>
+
+---
+
+## `ConsoleOutput`
+
+Listener Observer che riceve notifiche di cambiamento di stato e le stampa su stdout.
+
+```python
+class ConsoleOutput:
+    def on_state_changed(self, snapshot: dict) -> None:
+        print(format_snapshot(snapshot))
+```
+
+### Utilizzo
+
+```python
+from engine.debug_output import ConsoleOutput
+
+engine = AnalysisEngine(listener=ConsoleOutput())
+engine.start()
+```
+
+`ConsoleOutput` è il listener di default usato da `AnalysisEngine` quando viene avviato senza iniettare un listener GUI — utile per sviluppo/debug da terminale o nei test unitari.
+
+---
+
+## Contesto: Separazione dalla GUI
+
+In produzione il listener iniettato è `GuiOutput` (in `gui_output.py`), che usa `dashboard.after(0, ...)` per aggiornamenti thread-safe alla GUI. `ConsoleOutput` non ha dependenze su `customtkinter` e funziona senza finestra aperta.
