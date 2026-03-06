@@ -27,16 +27,21 @@ Output atteso con tutti i test passanti:
 
 ```
 ========================= test session starts =========================
-platform win32 -- Python 3.11.x, pytest-7.x.x
-collected 105 items
+platform win32 -- Python 3.13.x, pytest-9.x.x
+collected 277 items
 
-tests/test_models.py ............... [ 14%]
-tests/test_settings.py ...................... [ 35%]
-tests/test_engine.py .......................... [ 60%]
-tests/test_decision_engine.py ...................... [ 81%]
-tests/test_tools_image.py .................... [100%]
+tests/test_models.py .................. [ 6%]
+tests/test_settings.py ........................... [ 16%]
+tests/test_engine.py ............................  [ 38%]
+tests/test_decision_engine.py ................................... [ 51%]
+tests/test_postflop_engine.py ........................ [ 60%]
+tests/test_hand_eval.py .................  ...........[ 78%]
+tests/test_tools_image.py ................................. [ 90%]
+tests/test_integration.py ......... [ 93%]
+tests/test_file_logger.py .......... [ 97%]
+tests/test_gui_output.py ............ [100%]
 
-========================= 105 passed in X.XXs =========================
+========================= 277 passed in X.XXs =========================
 ```
 
 ---
@@ -108,60 +113,106 @@ pytest tests/ --cov=app --cov-report=term-missing
 
 ```
 tests/
-├── __init__.py
+├── helpers.py                  ← make_snapshot(), make_card(), calibrate_tracker()
+├── conftest.py                 ← sys.path + fixture pytest
 ├── test_models.py
 │   ├── TestColors
 │   ├── TestCard
 │   └── TestScreenshot
 ├── test_settings.py
-│   └── TestSettings
+│   ├── TestSettingsStructure
+│   ├── TestSettingsPositions
+│   ├── TestSettingsColorRanges
+│   └── TestSettingsCriticalThresholds
 ├── test_engine.py
-│   ├── TestGameState
-│   ├── TestStateTracker
-│   ├── TestHeroPredicates
-│   └── TestHandIdReset
+│   ├── TestCardReaderInstanceCache
+│   ├── TestStateTrackerObserver
+│   ├── TestConsoleOutput
+│   ├── TestGameSessionState
+│   ├── TestGameSessionFoldLogic
+│   ├── TestHandHistoryTracker
+│   ├── TestIsHeroFolded
+│   ├── TestIsHeroTurn
+│   ├── TestGameSessionHandId
+│   └── TestAnalysisEngineThreadSafety
 ├── test_decision_engine.py
 │   ├── TestHandKey
 │   ├── TestLookup
 │   ├── TestSeatToPosition
 │   ├── TestNormalizePosition
-│   └── TestPreflopEngine
-└── test_tools_image.py
-    ├── TestPreprocessing
-    ├── TestHsvUtils
-    └── TestTemplateMatch
+│   └── TestPreflopDecisionEngine
+├── test_postflop_engine.py
+│   ├── TestPostflopGuards
+│   ├── TestFlopDecision
+│   ├── TestTurnDecision
+│   └── TestRiverDecision
+├── test_hand_eval.py
+│   ├── TestBoardTexture
+│   ├── TestHasTopPair
+│   ├── TestEvaluateFive
+│   ├── TestBestHandWithHero
+│   └── TestPlayerRole
+├── test_tools_image.py
+│   ├── TestEmptyCard
+│   ├── TestColorDetection
+│   ├── TestGetCardColor
+│   ├── TestGetRelativePosition
+│   ├── TestGetPlayerPosition
+│   ├── TestCardReaderFiltration
+│   ├── TestCardReaderHiddenDebounce
+│   └── TestAnalyzeHeroRoi
+├── test_integration.py
+│   ├── TestColdStartMidflopNewHandPostflopSuggestion
+│   ├── TestFullStreetSequence
+│   ├── TestCompromisedHandReset
+│   └── TestBBInferenceAcrossSnapshots
+├── test_file_logger.py
+│   ├── TestFileLoggerWritesJsonl
+│   ├── TestFileLoggerSessionIsolation
+│   └── TestFileLoggerRobustness
+└── test_gui_output.py
+    └── TestGuiOutput
 ```
 
 ---
 
 ## Aggiungere Nuovi Test
 
-Il pattern di riferimento per i test del DSS è `make_snapshot()` in `test_decision_engine.py`:
+Il pattern di riferimento usa `make_snapshot()` da `helpers.py`:
 
 ```python
-def make_snapshot(**overrides):
-    """Helper per creare snapshot con valori di default sensati."""
-    base = {
-        "game_state":         "Preflop",
-        "player_cards":       [Card("A", Colors.Hearts), Card("K", Colors.Diamonds)],
-        "table_cards":        [],
-        "relative_position":  "CO",
-        "active_players":     [0, 1, 2, 3, 4, 5],
-        "hand_id":            1,
-        "player_bets":        {0: 0.0, 1: 0.5, 2: 1.0},
-        "pot_amount":         1.5,
-        "hero_folded":        False,
-        "hero_had_cards":     True,
-        "dealer_position":    2,
-    }
-    base.update(overrides)
-    return base
+# helpers.py è importabile direttamente (non conftest)
+from helpers import make_snapshot, make_card, calibrate_tracker
 
 class TestMyScenario(unittest.TestCase):
     def test_example(self):
-        snapshot = make_snapshot(relative_position="EP", player_bets={0:0, 1:0.5, 2:1.0})
         tracker = HandHistoryTracker()
         engine  = PreflopDecisionEngine(tracker)
+        calibrate_tracker(tracker)          # hand_id 0→Flop, 1→Preflop
+        snapshot = make_snapshot(
+            position="EP",
+            bets={1: 0.5, 2: 1.0},
+            cards=[make_card("A"), make_card("K")]
+        )
         tracker.update(snapshot)
         self.assertEqual(engine.evaluate(snapshot), Decision.RAISE)
+```
+
+Per test di integrazione (zero mock), usare `DecisionRouter` direttamente:
+
+```python
+from helpers import make_snapshot, make_card as c, calibrate_tracker
+from engine.hand_history import HandHistoryTracker
+from engine.decision_router import DecisionRouter
+from engine.decision_engine import Decision
+
+def test_full_flow():
+    tracker = HandHistoryTracker()
+    router  = DecisionRouter(tracker)
+    calibrate_tracker(tracker)
+    snap = make_snapshot(game_state="Flop", hand_id=1,
+                         cards=[c("K"), c("3")],
+                         table_cards=[c("K"), c("7"), c("2")])
+    tracker.update(snap)
+    assert router.evaluate(snap) == Decision.BET_75
 ```

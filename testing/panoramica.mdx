@@ -1,106 +1,194 @@
 ---
 title: "Suite di Test"
-description: "Panoramica dei 5 file di test, copertura per livello architetturale e statistiche."
+description: "Panoramica dei 10 file di test, copertura per livello architetturale e statistiche."
 icon: "flask"
 ---
 
 ## Statistiche Generali
 
-| File | Classi di Test | Test Totali | Livello |
+| File | Classi di Test | Test | Livello |
 |---|---|---|---|
-| `test_models.py` | 3 | 15 | Trasversale |
-| `test_settings.py` | 1 | 22 | Infrastruttura |
-| `test_engine.py` | ~4 | 26 | Applicazione |
-| `test_decision_engine.py` | ~5 | 22 | Applicazione (DSS) |
-| `test_tools_image.py` | ~3 | 20 | Dominio (Vision) |
-| **Totale** | | **~105** | |
+| `test_models.py` | 3 | 18 | Trasversale |
+| `test_settings.py` | 3 | 27 | Infrastruttura |
+| `test_engine.py` | 8 | 60 | Applicazione |
+| `test_decision_engine.py` | 6 | 35 | DSS — Preflop |
+| `test_postflop_engine.py` | 4 | 24 | DSS — Postflop |
+| `test_hand_eval.py` | 5 | 49 | DSS — Valutazione mano |
+| `test_tools_image.py` | 7 | 33 | Dominio (Vision) |
+| `test_integration.py` | 4 | 9 | Integrazione E2E |
+| `test_file_logger.py` | 3 | 10 | Persistenza |
+| `test_gui_output.py` | 1 | 12 | Presentazione |
+| **Totale** | | **277** | |
+
+**Infrastruttura condivisa:**
+- `helpers.py` — `make_snapshot()`, `make_card()`, `calibrate_tracker()`: utility importabili da tutti i test
+- `conftest.py` — fixture pytest che wrappano `helpers.py` + `sys.path` verso `app/`
 
 ---
 
 ## Copertura per Modulo
 
-### `test_models.py` — 15 test
+### `test_models.py` — 18 test
 
-Verifica le strutture dati fondamentali:
+Strutture dati fondamentali:
 
-- **`TestColors`** (5 test): valori enum (`"H"`, `"D"`, `"C"`, `"S"`, `"X"`), unicità valori, membership
-- **`TestCard`** (9 test): formato `__str__` (`"HA"`, `"DK"`), `__repr__`, uguaglianza (`__eq__`), disuguaglianza, `Colors.Error` come sentinel, coppie di carte
-- **`TestScreenshot`** (2 test): inizializzazione attributi, `__str__`
-
----
-
-### `test_settings.py` — 22 test
-
-Verifica che tutti i parametri in `settings.py` esistano e abbiano la struttura corretta:
-
-- `WINDOW_NAME` è stringa non vuota
-- `WINDOW_SIZE` è lista di 4 interi
-- `TESSERACT_PATH` è stringa
-- `TEMPLATE_MATCH_THRESHOLD` è float in `[0.0, 1.0]`
-- `CARD_W`, `CARD_H` sono interi positivi
-- `HERO_CARD_POSITIONS`: lista di 2 elementi `[x, y]`
-- `BOARD_CARD_POSITIONS`: lista di 5 elementi `[x, y]`; verifica che le x siano in ordine crescente (sinistra → destra)
-- `BUTTON_POSITIONS`, `BET_POSITIONS`, `PLAYER_POSITIONS`: lista di 6 elementi `[x, y, w, h]` con w/h positivi
-- `POT_AREA`: lista di 4 interi con w/h positivi
-- `MAX_INVALID_READS`: intero positivo
-- Assenza di variabili deprecate o rinominate
+- **`TestColors`** (5): valori enum (`"H"`, `"D"`, `"C"`, `"S"`, `"X"`), unicità
+- **`TestCard`** (11): `__str__`, `__repr__`, `__eq__`, valori arbitrari, `Colors.Error`, lista di carte
+- **`TestScreenshot`** (2): inizializzazione attributi, `__str__`
 
 ---
 
-### `test_engine.py` — 26 test
+### `test_settings.py` — 27 test
 
-Testa `GameSession`, `StateTracker` e le funzioni predicato:
+Contratto di configurazione — protegge da deploy con parametri rotti:
 
-- **`GameSession.check_game_state()`**: 0/3/4/5 carte → stati corretti; altri numeri → `"Unknown"`
-- **`StateTracker.check()`**: nessuna notifica se stato invariato; notifica se cambia almeno un campo; correttezza snapshot dict
-- **`is_hero_turn()`**: True solo se hero ha 2 carte e bet < max; False se folded; False se non preflop
-- **`is_hero_folded()`**: comportamento Preflop vs Flop/Turn/River
-- **Integrazione**: `hand_id` incrementa correttamente con la new-hand logic
-
----
-
-### `test_decision_engine.py` — 22 test
-
-Testa il DSS in isolamento completo:
-
-- **`TestHandKey`** (6): pairs, suited, offsuit, ordine rango, Ten (`"T"`), rango invalido → `""`
-- **`TestLookup`** (3): key in raise list, key in call list, key non presente → `"fold"`
-- **`TestSeatToPosition`** (4): tavolo pieno 6 giocatori, seat sparsi, heads-up, seat inattivo → `"Unknown"`
-- **`TestNormalizePosition`** (6): 6-max invariato; 5/4-player EP/MP collassa; n_active=0 guard
-- **Integrazione engine** (~9): RFI scenario → RAISE/CALL/FOLD; VS_RAISE scenario; guardia WAIT (non calibrato, non preflop, 0 carte); guardia COMPROMISED
+- **`TestSettingsStructure`** (15): `WINDOW_NAME`, `WINDOW_SIZE`, `TESSERACT_PATH`, `TEMPLATE_MATCH_THRESHOLD`, `CARD_W/H`, `HERO_CARD_POSITIONS` (2 elementi), `BOARD_CARD_POSITIONS` (5, x crescenti), assenza variabili deprecate
+- **`TestSettingsPositions`** (8): `BUTTON/BET/PLAYER_POSITIONS` (6 elementi `[x,y,w,h]`), `POT_AREA`
+- **`TestSettingsColorRanges`** (3): HEX validi per i quattro semi
+- **`TestSettingsCriticalThresholds`** (1): `POT_RESET_THRESHOLD > 0` (controlla il rilevamento nuova mano)
 
 ---
 
-### `test_tools_image.py` — 20 test
+### `test_engine.py` — 60 test
 
-Testa le funzioni CV pure di `image_utils.py`:
+Application layer — macchina a stati, observer, predicati:
 
-- **`TestPreprocessNumberRoi`**: output corretto (3× upscale + binarizzato)
-- **`TestHexToHsvRange`**: conversione HEX → range HSV valido; flag `is_black`
-- **`TestMatchCardTemplate`**: template match su immagini test sintetiche; ritorna `"X"` sotto threshold
-- **`TestIsCardEmpty`**: distingue carta piena da ROI verde (sfondo)
+- **`TestCardReaderInstanceCache`** (3): cache indipendente per istanza (bug multi-tavolo), lock threading
+- **`TestStateTrackerObserver`** (11): notifica al cambio stato, silenzio se stato invariato, più listener, snapshot immutabile, tolleranza pot 0.01, `remove_listener`, `notify_table_closed`
+- **`TestConsoleOutput`** (2): `print()` chiamato, campi chiave nell'output
+- **`TestGameSessionState`** (6): `check_game_state()` → 0/3/4/5 carte = Preflop/Flop/Turn/River; 1-2 = Unknown
+- **`TestGameSessionFoldLogic`** (2): fold bypassa lettura carte, hero attivo legge le carte
+- **`TestHandHistoryTracker`** (11): calibrazione immediata su Preflop pulito, WAIT su mid-hand, reset via `hand_id`, `_hand_compromised`, BB inference (sanity check ratio SB/BB), rifiuto garbage OCR
+- **`TestIsHeroFolded`** (6): pre-deal vs fold reale, Unknown silenzioso
+- **`TestIsHeroTurn`** (6): senza carte = False, 2 carte + bet pendente = True, matched = False, Flop con bet pendente = True
+- **`TestGameSessionHandId`** (7): `hand_id` in snapshot, carte congelate dopo fold, `initial_active_players` preservata, reset nuova mano
+- **`TestAnalysisEngineThreadSafety`** (4): `_shared_listener` presente, storico rename assente, `PokerTHGui._append_log_entry` callable
+
+---
+
+### `test_decision_engine.py` — 35 test
+
+DSS Preflop — tabelle, posizioni, engine:
+
+- **`TestHandKey`** (6): pair, suited, offsuit, ordine rango, `"T"`, rango invalido → `""`
+- **`TestLookup`** (3): raise / call / fold (key assente)
+- **`TestSeatToPosition`** (4): 6 giocatori consecutivi, seat sparsi, heads-up, seat inattivo → `"Unknown"`
+- **`TestNormalizePosition`** (7): 6-max invariato, EP/MP collassa a n-max, guard `n_active=0`
+- **`TestPreflopDecisionEngine`** (15): guard WAIT (non calibrato, non Preflop, carte mancanti, posizione Unknown), RFI (RAISE, FOLD, BB→FOLD_CHECK), VS-raise (AA→RAISE, KQs→RAISE), short-handed 4-max, COMPROMISED vs WAIT distinzione, BB raiser → UNKNOWN, reset tra mani
+
+---
+
+### `test_postflop_engine.py` — 24 test
+
+DSS Postflop — guard e matrice decisionale:
+
+- **`TestPostflopGuards`** (6): Preflop/Unknown/non calibrato/compromesso/no carte/board insufficiente → WAIT o COMPROMISED
+- **`TestFlopDecision`** (6): WET CALLER, WET AGGRESSOR, WET AGGRESSOR_STRONG, DRY CALLER, DRY AGGRESSOR, DRY AGGRESSOR_STRONG
+- **`TestTurnDecision`** (4): WET/DRY × CALLER/AGGRESSOR
+- **`TestRiverDecision`** (4): WET/DRY × CALLER/AGGRESSOR
+- **DecisionRouter** (4): Preflop→Preflop engine, Flop→Postflop engine, Turn→Postflop engine, COMPROMISED→COMPROMISED
+
+---
+
+### `test_hand_eval.py` — 49 test
+
+Valutazione mano poker (Foundation del postflop):
+
+- **`TestBoardTexture`** (11): WET (consecutive, stesso seme, coppia, tris), DRY (gap, board secco), Turn/River, < 3 carte → DRY, A-2 non consecutivi
+- **`TestHasTopPair`** (7): top pair match, second pair, bottom pair → False, nessuna coppia, board vuoto, coppia sul board, Turn
+- **`TestEvaluateFive`** (11): tutte le 9 mani poker (HIGH_CARD→STRAIGHT_FLUSH) + wheel (A-2-3-4-5)
+- **`TestBestHandWithHero`** (9): pair, trips, straight, flush, board pair senza hero, full house, Turn, River (royal flush), high card only
+- **`TestPlayerRole`** (11): CALLER (no hit, board pair), AGGRESSOR (top pair, second pair, turn), AGGRESSOR_STRONG (trips, straight, flush, full house), TWO_PAIR → AGGRESSOR (coverage path)
+
+---
+
+### `test_tools_image.py` — 33 test
+
+Vision layer con immagini sintetiche (numpy/opencv):
+
+- **`TestEmptyCard`** (3): grigio → vuoto, bianco con testo → non vuoto, nero → vuoto
+- **`TestColorDetection`** (6): rilevamento dei 4 semi (Hearts/Clubs/Diamonds/Spades) + cross-check negativi + pixel sparsi
+- **`TestGetCardColor`** (2): blu → Diamonds, bianco → Error
+- **`TestGetRelativePosition`** (8): dealer -1 → Unknown, tutte le posizioni 6-max, wrap-around
+- **`TestGetPlayerPosition`** (1): sempre seat 0
+- **`TestCardReaderFiltration`** (3): placeholder in bypass mode, debouncing su board sporco, reset dopo MAX_INVALID_READS
+- **`TestCardReaderHiddenDebounce`** (4): cache restituita su carte coperte, incremento contatore, reset cache a soglia, reset contatore su carte valide
+- **`TestAnalyzeHeroRoi`** (6): chiavi presenti nel dict, bianco → active, verde → folded, caso misto (fix Fase 8), pre-deal → False, light_green su bianco ≈ 0
+
+---
+
+### `test_integration.py` — 9 test (zero mock)
+
+Flusso end-to-end reale `HandHistoryTracker → DecisionRouter`:
+
+- **`TestColdStartMidflopNewHandPostflopSuggestion`** (3): mid-flop → WAIT; cambio `hand_id` → calibrato; Flop nuova mano → BET_75 (scenario principale del cold-start)
+- **`TestFullStreetSequence`** (2): Preflop AA → RAISE, Flop top pair → BET_75, Turn → BET_75, River tris → ALL_IN; nuova mano dopo River → ancora calibrato
+- **`TestCompromisedHandReset`** (2): COMPROMISED azzerato su cambio `hand_id`, Preflop→Preflop compromised reset
+- **`TestBBInferenceAcrossSnapshots`** (2): BB inferito + raiser rilevato nel frame successivo, garbage OCR (ratio fuori range) rifiutato
+
+---
+
+### `test_file_logger.py` — 10 test
+
+Persistenza JSONL:
+
+- **`TestFileLoggerWritesJsonl`** (4): file creato, chiavi attese (`ts`, `decision`, `game_state`, `hand_id`), 5 snapshot → 5 righe in ordine, decision value preservato
+- **`TestFileLoggerSessionIsolation`** (3): due istanze → file separati, `log_path` nella cartella corretta, contenuto non condiviso
+- **`TestFileLoggerRobustness`** (3): `OSError` silenziato, `on_table_closed` no-op, `log.__func__ is on_state_changed.__func__` (alias backward-compat)
+
+---
+
+### `test_gui_output.py` — 12 test
+
+Presentation layer — nessuna dipendenza da CustomTkinter:
+
+- **`MockDashboard`** con `after()` sincrono (chiama subito la lambda) — permette test isolati senza widget
+- Scenari: `on_state_changed` → `on_snapshot`, nome tavolo corretto, non calibrato → WAIT, hero foldato → FOLDED, Preflop calibrato → Decision valida, Flop calibrato → Decision postflop, FileLogger riceve snapshot arricchito, `log_dir=None` → nessun logger, `on_table_closed` rimuove tracker/router, tavolo sconosciuto → no crash, due tavoli → tracker indipendenti, import senza CustomTkinter installato
 
 ---
 
 ## Architettura dei Test
 
-I test seguono il principio di **dependency injection** già integrato nell'architettura:
+```
+tests/
+├── helpers.py              ← make_snapshot(), make_card(), calibrate_tracker()
+├── conftest.py             ← sys.path + fixture pytest che wrappano helpers
+├── test_models.py
+├── test_settings.py
+├── test_engine.py
+├── test_decision_engine.py
+├── test_postflop_engine.py
+├── test_hand_eval.py
+├── test_tools_image.py
+├── test_integration.py
+├── test_file_logger.py
+└── test_gui_output.py
+```
+
+`make_snapshot()` vive in `helpers.py` ed è importata direttamente nei test (`from helpers import make_snapshot`). `conftest.py` non è importabile come modulo Python normale — contiene solo le fixture pytest.
 
 ```python
-# test_decision_engine.py — esempio pattern
-def make_snapshot(**overrides):
+# helpers.py — helper condiviso tra tutti i file di test
+def make_snapshot(**kwargs) -> dict:
     base = {
-        "game_state":        "Preflop",
-        "player_cards":      [Card("A", Hearts), Card("K", Diamonds)],
-        "table_cards":       [],
-        "relative_position": "CO",
-        "hand_id":           1,
-        "player_bets":       {0: 0, 1: 0.5, 2: 1.0},
-        "pot_amount":        1.5,
-        ...
+        "game_state":              "Preflop",
+        "player_cards":            [],
+        "table_cards":             [],
+        "relative_position":       kwargs.get("position", "CO"),
+        "active_players":          kwargs.get("active", [0, 1, 2, 3, 4, 5]),
+        "initial_active_players":  kwargs.get("active", [0, 1, 2, 3, 4, 5]),
+        "hand_id":                 kwargs.get("hand_id", 1),
+        "player_bets":             kwargs.get("bets", {}),
+        "pot_amount":              kwargs.get("pot", 0.0),
+        "hero_folded":             kwargs.get("hero_folded", False),
+        "hero_had_cards":          kwargs.get("hero_had_cards", True),
+        "dealer_position":         kwargs.get("dealer", 0),
+        "table_name":              kwargs.get("table_name", "T1"),
     }
-    base.update(overrides)
+    base.update({k: v for k, v in kwargs.items() if k in base or k == "cards"})
+    if "cards" in kwargs:
+        base["player_cards"] = kwargs["cards"]
     return base
 ```
 
-I test non richiedono finestre reali, screenshot o template PNG — operano su dati sintetici.
+I test non richiedono finestre reali, screenshot, template PNG, né CustomTkinter — operano esclusivamente su dati sintetici.
